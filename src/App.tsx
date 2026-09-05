@@ -20,8 +20,8 @@ export default function App() {
   const [cashTransactions, setCashTransactions] = useState<CashTransaction[]>([]);
   const [motoboys, setMotoboys] = useState<Motoboy[]>([]);
   const [adminSettings, setAdminSettings] = useState<AdminSettings>({
-    adminLogin: 'admin',
-    adminPass: 'admin'
+    adminLogin: 'LeonarDo39',
+    adminPass: '@vidaminha125689'
   });
 
   // Routing States

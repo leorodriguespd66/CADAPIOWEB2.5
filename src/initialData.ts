@@ -9,8 +9,8 @@ export const DEFAULT_NOTIFICATION_SETTINGS: StoreNotificationSettings = {
 };
 
 export const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
-  adminLogin: 'admin',
-  adminPass: 'admin',
+  adminLogin: 'LeonarDo39',
+  adminPass: '@vidaminha125689',
   superAdminWhatsapp: '5594992944888'
 };
 

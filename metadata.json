@@ -1,0 +1,6 @@
+{
+  "name": "Cardápio Web",
+  "description": "Plataforma de Cardápio Digital e Sistema de Pedidos para WhatsApp",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

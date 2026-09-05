@@ -237,7 +237,36 @@ app.patch("/api/orders/:id/status", (req, res) => {
 
 // Full database sync
 app.get("/api/data", (req, res) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
   res.json(appData);
+});
+
+// Dedicated Admin Settings endpoint
+app.get("/api/admin-settings", (req, res) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.json(appData.adminSettings || DEFAULT_ADMIN_SETTINGS);
+});
+
+app.post("/api/admin-settings", (req, res) => {
+  const { adminLogin, adminPass, superAdminWhatsapp } = req.body;
+  let cleanPhone = (superAdminWhatsapp || '').replace(/\D/g, '');
+  if (cleanPhone && !cleanPhone.startsWith('55') && (cleanPhone.length === 10 || cleanPhone.length === 11)) {
+    cleanPhone = '55' + cleanPhone;
+  }
+
+  appData.adminSettings = {
+    adminLogin: adminLogin || appData.adminSettings?.adminLogin || 'admin',
+    adminPass: adminPass || appData.adminSettings?.adminPass || 'admin',
+    superAdminWhatsapp: cleanPhone || appData.adminSettings?.superAdminWhatsapp || '5594992944888'
+  };
+
+  saveData(appData);
+  broadcastData(appData);
+  res.json({ success: true, adminSettings: appData.adminSettings });
 });
 
 app.post("/api/data", (req, res) => {
@@ -245,7 +274,16 @@ app.post("/api/data", (req, res) => {
   if (stores) appData.stores = stores;
   if (categories) appData.categories = categories;
   if (products) appData.products = products;
-  if (adminSettings) appData.adminSettings = adminSettings;
+  if (adminSettings) {
+    let cleanPhone = (adminSettings.superAdminWhatsapp || '').replace(/\D/g, '');
+    if (cleanPhone && !cleanPhone.startsWith('55') && (cleanPhone.length === 10 || cleanPhone.length === 11)) {
+      cleanPhone = '55' + cleanPhone;
+    }
+    appData.adminSettings = {
+      ...adminSettings,
+      superAdminWhatsapp: cleanPhone || adminSettings.superAdminWhatsapp || '5594992944888'
+    };
+  }
   if (orders) appData.orders = deduplicateOrders(orders);
   if (cashTransactions) appData.cashTransactions = cashTransactions;
   if (motoboys) appData.motoboys = motoboys;

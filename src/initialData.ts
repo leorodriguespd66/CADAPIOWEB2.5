@@ -604,10 +604,17 @@ export function getLocalStorageData() {
   if (storedAdmin) {
     try {
       const parsedAdmin = JSON.parse(storedAdmin);
+      let whatsapp = parsedAdmin.superAdminWhatsapp || DEFAULT_ADMIN_SETTINGS.superAdminWhatsapp;
+      if (whatsapp === '5511999999999') {
+        whatsapp = DEFAULT_ADMIN_SETTINGS.superAdminWhatsapp;
+      }
+      if (whatsapp && !whatsapp.startsWith('55') && (whatsapp.length === 10 || whatsapp.length === 11)) {
+        whatsapp = '55' + whatsapp;
+      }
       adminSettings = {
         ...DEFAULT_ADMIN_SETTINGS,
         ...parsedAdmin,
-        superAdminWhatsapp: parsedAdmin.superAdminWhatsapp || DEFAULT_ADMIN_SETTINGS.superAdminWhatsapp
+        superAdminWhatsapp: whatsapp
       };
     } catch (e) {
       console.error(e);

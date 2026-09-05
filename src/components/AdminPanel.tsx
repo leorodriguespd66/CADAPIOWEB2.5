@@ -121,13 +121,13 @@ export default function AdminPanel({
   // Admin account change state
   const [newLogin, setNewLogin] = useState(adminSettings.adminLogin);
   const [newPass, setNewPass] = useState(adminSettings.adminPass);
-  const [superAdminWhatsappInput, setSuperAdminWhatsappInput] = useState(adminSettings.superAdminWhatsapp || '5511999999999');
+  const [superAdminWhatsappInput, setSuperAdminWhatsappInput] = useState(adminSettings.superAdminWhatsapp || '5594992944888');
   const [settingsSuccess, setSettingsSuccess] = useState('');
 
   useEffect(() => {
     setNewLogin(adminSettings.adminLogin);
     setNewPass(adminSettings.adminPass);
-    setSuperAdminWhatsappInput(adminSettings.superAdminWhatsapp || '5511999999999');
+    setSuperAdminWhatsappInput(adminSettings.superAdminWhatsapp || '5594992944888');
   }, [adminSettings]);
 
   // Helpers
@@ -854,20 +854,45 @@ export default function AdminPanel({
   // ----------------------------------------------------
   // ADMIN ACCOUNT SETTINGS
   // ----------------------------------------------------
-  const handleSaveAdminSettings = (e: React.FormEvent) => {
+  const handleSaveAdminSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newLogin.trim() || !newPass.trim()) {
       alert('Login e Senha não podem ser em branco!');
       return;
     }
 
+    let cleanPhone = superAdminWhatsappInput.replace(/\D/g, '');
+    if (cleanPhone && !cleanPhone.startsWith('55') && (cleanPhone.length === 10 || cleanPhone.length === 11)) {
+      cleanPhone = '55' + cleanPhone;
+    }
+    if (!cleanPhone) {
+      cleanPhone = '5594992944888';
+    }
+
     const updatedSettings: AdminSettings = {
       adminLogin: newLogin.trim(),
       adminPass: newPass.trim(),
-      superAdminWhatsapp: superAdminWhatsappInput.trim() || '5511999999999'
+      superAdminWhatsapp: cleanPhone
     };
 
+    // Save directly to localStorage for immediate availability
+    try {
+      localStorage.setItem('cardapio_admin_settings', JSON.stringify(updatedSettings));
+    } catch {}
+
+    // Send direct POST to server dedicated endpoint for cross-device sync
+    try {
+      await fetch('/api/admin-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedSettings)
+      });
+    } catch (err) {
+      console.warn('Server sync error for admin settings:', err);
+    }
+
     onUpdateData(stores, categories, products, updatedSettings);
+    setSuperAdminWhatsappInput(cleanPhone);
     setSettingsSuccess('Configurações administrativas atualizadas com sucesso!');
     setTimeout(() => setSettingsSuccess(''), 4000);
   };

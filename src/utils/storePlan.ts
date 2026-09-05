@@ -195,10 +195,38 @@ export function formatPhoneNumber(phone: string = ''): string {
 }
 
 /**
- * Generates direct WhatsApp link to the Super Administrator
+ * Generates direct WhatsApp link to the Super Administrator.
+ * Works seamlessly across mobile phones (iOS/Android), tablets and desktop.
  */
-export function getAdminWhatsAppLink(phone: string = '5594992944888', message: string = ''): string {
-  const cleanPhone = phone.replace(/\D/g, '') || '5594992944888';
+export function getAdminWhatsAppLink(phone?: string, message: string = ''): string {
+  let rawPhone = phone;
+
+  // If no phone was passed or it's empty, attempt to read directly from saved admin settings
+  if (!rawPhone && typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem('cardapio_admin_settings');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && parsed.superAdminWhatsapp) {
+          rawPhone = parsed.superAdminWhatsapp;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  let cleanPhone = (rawPhone || '').replace(/\D/g, '');
+
+  // If user entered Brazilian phone without country code (10 or 11 digits: DDD + Number), add 55
+  if (cleanPhone && !cleanPhone.startsWith('55') && (cleanPhone.length === 10 || cleanPhone.length === 11)) {
+    cleanPhone = '55' + cleanPhone;
+  }
+
+  if (!cleanPhone) {
+    cleanPhone = '5594992944888';
+  }
+
   const defaultMsg = message || 'Olá! Gostaria de falar com o Administrador do Cardápio Web.';
-  return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(defaultMsg)}`;
+  return `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(defaultMsg)}`;
 }

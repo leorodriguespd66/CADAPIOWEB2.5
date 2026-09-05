@@ -72,7 +72,7 @@
         }
       ],
       "minOrder": 35,
-      "workingHours": "Todos os dias das 18:00 às 03:00",
+      "workingHours": "Todos os dias das 6:00 às 18:00",
       "themeColor": "#16a34a",
       "isActive": true,
       "instagramUrl": "https://instagram.com/bellaitaliapizza",
@@ -80,10 +80,11 @@
       "isBlocked": false,
       "daysOnline": 33,
       "planExpiresAt": "2026-10-07T05:10:45.209Z",
-      "rating": 4.9,
+      "rating": 5,
       "ownerEmail": "contato@bellaitaliapizza.com",
       "ownerLogin": "pizza",
-      "ownerPassword": "1234"
+      "ownerPassword": "1234",
+      "ratingCount": 1
     },
     {
       "id": "store-1788495753539",
@@ -377,6 +378,80 @@
     }
   ],
   "orders": [
+    {
+      "id": "ord-1788624056951",
+      "code": "#3034",
+      "storeId": "store-2",
+      "createdAt": "2026-09-05T16:00:56.951Z",
+      "customerName": "safsdf",
+      "customerPhone": "sdgdsgds",
+      "receiptType": "delivery",
+      "addressStreet": "asfsdfd",
+      "addressNumber": "asfs",
+      "addressNeighborhood": "asfs",
+      "addressComplement": "safs",
+      "tableNumber": "",
+      "paymentMethod": "cartao_credito",
+      "changeFor": "",
+      "notes": "",
+      "subtotal": 61.9,
+      "deliveryFee": 7,
+      "total": 68.9,
+      "status": "completed",
+      "items": [
+        {
+          "productName": "Pizza Margherita [Gigante]",
+          "quantity": 1,
+          "unitPrice": 61.9,
+          "totalPrice": 61.9,
+          "choicesText": [
+            "Tamanho: Gigante (10 fatias - 40cm) (R$ 61.90)"
+          ]
+        }
+      ],
+      "driverId": "driver-1788576937137",
+      "driverName": "vitore",
+      "driverPhone": "94992944888",
+      "driverFee": 7,
+      "driverFeePaid": false
+    },
+    {
+      "id": "ord-1788623822288",
+      "code": "#4378",
+      "storeId": "store-2",
+      "createdAt": "2026-09-05T15:57:02.288Z",
+      "customerName": "zxc\\xv",
+      "customerPhone": "csdfd",
+      "receiptType": "delivery",
+      "addressStreet": "sdfsd",
+      "addressNumber": "asfsf",
+      "addressNeighborhood": "asdsaf",
+      "addressComplement": "sfsaf",
+      "tableNumber": "",
+      "paymentMethod": "pix",
+      "changeFor": "",
+      "notes": "",
+      "subtotal": 61.9,
+      "deliveryFee": 7,
+      "total": 68.9,
+      "status": "completed",
+      "items": [
+        {
+          "productName": "Pizza Margherita [Gigante]",
+          "quantity": 1,
+          "unitPrice": 61.9,
+          "totalPrice": 61.9,
+          "choicesText": [
+            "Tamanho: Gigante (10 fatias - 40cm) (R$ 61.90)"
+          ]
+        }
+      ],
+      "driverId": "driver-1788576937137",
+      "driverName": "vitore",
+      "driverPhone": "94992944888",
+      "driverFee": 7,
+      "driverFeePaid": false
+    },
     {
       "id": "ord-1788580205019",
       "code": "#2506",
@@ -749,7 +824,7 @@
     }
   ],
   "adminSettings": {
-    "adminLogin": "admin",
+    "adminLogin": "LeonarDo39",
     "adminPass": "admin",
     "superAdminWhatsapp": "5594992944888"
   },

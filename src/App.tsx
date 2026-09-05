@@ -54,15 +54,20 @@ export default function App() {
       if (payload.stores) setStores(payload.stores);
       if (payload.categories) setCategories(payload.categories);
       if (payload.motoboys) setMotoboys(payload.motoboys);
-      if (payload.adminSettings) setAdminSettings(payload.adminSettings);
+      if (payload.adminSettings) {
+        setAdminSettings(payload.adminSettings);
+        try {
+          localStorage.setItem('cardapio_admin_settings', JSON.stringify(payload.adminSettings));
+        } catch {}
+      }
       if (payload.orders) setOrders(payload.orders);
     });
 
     // Request native browser desktop notifications
     requestNotificationPermission();
 
-    // Check backend server for any new data or cross-device orders
-    fetch('/api/data')
+    // Check backend server for any new data or cross-device orders with cache-busting
+    fetch(`/api/data?_t=${Date.now()}`, { cache: 'no-store' })
       .then(res => res.json())
       .then(serverData => {
         if (serverData) {
@@ -84,7 +89,9 @@ export default function App() {
           }
           if (serverData.adminSettings && serverData.adminSettings.superAdminWhatsapp) {
             setAdminSettings(serverData.adminSettings);
-            localStorage.setItem('cardapio_admin_settings', JSON.stringify(serverData.adminSettings));
+            try {
+              localStorage.setItem('cardapio_admin_settings', JSON.stringify(serverData.adminSettings));
+            } catch {}
           }
         }
       })

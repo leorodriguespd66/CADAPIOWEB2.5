@@ -118,6 +118,7 @@ class RealtimeOrderManager {
   private lastKnownOrders: Order[] = [];
   private lastKnownSignature: string = '';
   private lastKnownProductsSignature: string = '';
+  private lastKnownAdminWhatsapp: string = '';
   private lastUserActionTime: number = 0;
 
   constructor() {
@@ -161,6 +162,12 @@ class RealtimeOrderManager {
   }
 
   private notifyDataListeners(payload: RealtimeDataPayload) {
+    if (payload.adminSettings && payload.adminSettings.superAdminWhatsapp) {
+      this.lastKnownAdminWhatsapp = payload.adminSettings.superAdminWhatsapp;
+      try {
+        localStorage.setItem('cardapio_admin_settings', JSON.stringify(payload.adminSettings));
+      } catch {}
+    }
     this.dataListeners.forEach(fn => {
       try {
         fn(payload);
@@ -252,6 +259,11 @@ class RealtimeOrderManager {
           const motoboys = JSON.parse(event.newValue);
           this.notifyDataListeners({ motoboys });
         } catch (e) {}
+      } else if (event.key === 'cardapio_admin_settings' && event.newValue) {
+        try {
+          const adminSettings = JSON.parse(event.newValue);
+          this.notifyDataListeners({ adminSettings });
+        } catch (e) {}
       }
     });
   }
@@ -296,6 +308,25 @@ class RealtimeOrderManager {
         }
       } catch (e) {
         // server might be booting or offline
+      }
+
+      // Heartbeat sync for admin settings across all devices
+      try {
+        const adminRes = await fetch(`/api/admin-settings?_t=${Date.now()}`, { cache: 'no-store' });
+        if (adminRes.ok) {
+          const adminData = await adminRes.json();
+          if (adminData && adminData.superAdminWhatsapp) {
+            if (!this.lastKnownAdminWhatsapp || this.lastKnownAdminWhatsapp !== adminData.superAdminWhatsapp) {
+              this.lastKnownAdminWhatsapp = adminData.superAdminWhatsapp;
+              try {
+                localStorage.setItem('cardapio_admin_settings', JSON.stringify(adminData));
+              } catch {}
+              this.notifyDataListeners({ adminSettings: adminData });
+            }
+          }
+        }
+      } catch (e) {
+        // ignore fetch error
       }
     }, 4000);
   }

@@ -161,11 +161,133 @@ app.get("/api/orders/stream", (req, res) => {
   const client: SSEClient = { id: clientId, res };
   sseClients.push(client);
 
-  // Send current orders immediately upon connecting
-  res.write(`data: ${JSON.stringify({ type: "INIT", orders: appData.orders, timestamp: Date.now() })}\n\n`);
+  // Send current state immediately upon connecting
+  res.write(`data: ${JSON.stringify({
+    type: "INIT",
+    orders: appData.orders,
+    stores: appData.stores,
+    categories: appData.categories,
+    products: appData.products,
+    adminSettings: appData.adminSettings,
+    motoboys: appData.motoboys,
+    timestamp: Date.now()
+  })}\n\n`);
 
   req.on("close", () => {
     sseClients = sseClients.filter(c => c.id !== clientId);
+  });
+});
+
+// Periodic SSE Keep-Alive ping to prevent Cloud Run / Nginx reverse proxy timeouts
+setInterval(() => {
+  sseClients.forEach(client => {
+    try {
+      client.res.write(`: ping ${Date.now()}\n\n`);
+    } catch (err) {}
+  });
+}, 15000);
+
+// Get stores, categories and products
+app.get("/api/stores", (req, res) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.json({
+    stores: appData.stores || [],
+    categories: appData.categories || [],
+    products: appData.products || [],
+    timestamp: Date.now()
+  });
+});
+
+// Dedicated registration endpoint for new store establishments
+app.post("/api/stores/register", (req, res) => {
+  const { newStore, defaultCategory, defaultProduct } = req.body;
+  if (!newStore || !newStore.name || !newStore.slug) {
+    return res.status(400).json({ error: "Dados do estabelecimento incompletos." });
+  }
+
+  // Reload current data from disk to ensure safety
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const raw = fs.readFileSync(DATA_FILE, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed.stores)) appData.stores = parsed.stores;
+      if (Array.isArray(parsed.categories)) appData.categories = parsed.categories;
+      if (Array.isArray(parsed.products)) appData.products = parsed.products;
+    }
+  } catch (e) {}
+
+  const cleanSlug = newStore.slug.toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+  if (!cleanSlug) {
+    return res.status(400).json({ error: "Endereço da web (slug) inválido." });
+  }
+
+  // Check if slug or ownerLogin is taken
+  const duplicate = appData.stores.some(s => 
+    (s.slug && s.slug.toLowerCase() === cleanSlug) ||
+    (newStore.ownerLogin && s.ownerLogin && s.ownerLogin.toLowerCase() === newStore.ownerLogin.toLowerCase())
+  );
+  if (duplicate) {
+    return res.status(409).json({ error: "Esse endereço da web ou usuário de login já está em uso." });
+  }
+
+  const cleanPhone = (newStore.phone || '').replace(/\D/g, '');
+  const registeredStore = {
+    ...newStore,
+    id: newStore.id || `store-${Date.now()}`,
+    slug: cleanSlug,
+    phone: cleanPhone,
+    isActive: true,
+    isApproved: false, // Inicia como Pendente para o Administrador Geral liberar
+    isBlocked: false,
+    daysOnline: newStore.daysOnline || 30,
+    planExpiresAt: newStore.planExpiresAt || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    createdAt: newStore.createdAt || new Date().toISOString()
+  };
+
+  appData.stores = [...appData.stores, registeredStore];
+
+  if (defaultCategory) {
+    const catExists = appData.categories.some(c => c.id === defaultCategory.id);
+    if (!catExists) {
+      appData.categories = [...appData.categories, defaultCategory];
+    }
+  }
+
+  if (defaultProduct) {
+    const prodExists = appData.products.some(p => p.id === defaultProduct.id);
+    if (!prodExists) {
+      appData.products = [...appData.products, defaultProduct];
+    }
+  }
+
+  saveData(appData);
+  broadcastData(appData);
+
+  // Broadcast specific NEW_STORE_REGISTERED event to all connected clients
+  const newStoreMsg = JSON.stringify({
+    type: "NEW_STORE_REGISTERED",
+    store: registeredStore,
+    stores: appData.stores,
+    categories: appData.categories,
+    products: appData.products,
+    timestamp: Date.now()
+  });
+  sseClients.forEach(client => {
+    try {
+      client.res.write(`data: ${newStoreMsg}\n\n`);
+    } catch (e) {}
+  });
+
+  console.log(`[STORE REGISTERED] Novo estabelecimento cadastrado: ${registeredStore.name} (${registeredStore.slug})`);
+
+  res.status(201).json({
+    success: true,
+    store: registeredStore,
+    stores: appData.stores,
+    categories: appData.categories,
+    products: appData.products
   });
 });
 

@@ -63,6 +63,8 @@ export default function App() {
       if (payload.orders) setOrders(payload.orders);
     });
 
+    realtimeOrderManager.setInitialStores(stores);
+
     // Request native browser desktop notifications
     requestNotificationPermission();
 
@@ -80,6 +82,7 @@ export default function App() {
           }
           if (Array.isArray(serverData.stores) && serverData.stores.length > 0) {
             setStores(serverData.stores);
+            realtimeOrderManager.setInitialStores(serverData.stores);
           }
           if (Array.isArray(serverData.categories) && serverData.categories.length > 0) {
             setCategories(serverData.categories);
@@ -235,9 +238,46 @@ export default function App() {
     setActiveStoreSlug(null);
   };
 
-  const handleRegisterStore = (newStore: Store) => {
-    const updatedStores = [...stores, newStore];
-    handleUpdateData(updatedStores, categories, products, adminSettings);
+  const handleRegisterStore = async (newStore: Store) => {
+    // 1. Create default category and product for this new store
+    const defaultCatId = `cat-${Date.now()}`;
+    const defaultCat: Category = {
+      id: defaultCatId,
+      storeId: newStore.id,
+      name: 'Destaques do Cardápio',
+      order: 1
+    };
+    const defaultProd: Product = {
+      id: `prod-${Date.now()}`,
+      storeId: newStore.id,
+      categoryId: defaultCatId,
+      name: 'Meu Primeiro Item',
+      description: 'Edite este item no painel do lojista para adicionar seus produtos.',
+      price: 19.9,
+      imageUrl: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500&auto=format&fit=crop&q=60',
+      isActive: true,
+      isAvailable: true,
+      options: []
+    };
+
+    const updatedStores = [...stores.filter(s => s.id !== newStore.id && s.slug !== newStore.slug), newStore];
+    const updatedCategories = [...categories, defaultCat];
+    const updatedProducts = [...products, defaultProd];
+
+    // Optimistic local state update
+    handleUpdateData(updatedStores, updatedCategories, updatedProducts, adminSettings);
+
+    // Call server to persist and broadcast to all connected devices in real time
+    try {
+      const serverResult = await realtimeOrderManager.registerStore(newStore, defaultCat, defaultProd);
+      if (serverResult && serverResult.stores && serverResult.stores.length > 0) {
+        setStores(serverResult.stores);
+        if (serverResult.categories) setCategories(serverResult.categories);
+        if (serverResult.products) setProducts(serverResult.products);
+      }
+    } catch (err) {
+      console.warn('Realtime store registration error:', err);
+    }
   };
 
   // Find active store for digital menu view

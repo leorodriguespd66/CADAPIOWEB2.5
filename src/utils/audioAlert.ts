@@ -144,3 +144,31 @@ export function isAlertMuted(): boolean {
 export function previewAlertSound() {
   playChimeBeep();
 }
+
+/**
+ * Plays a pleasant ascending 3-tone chime when a new store/restaurant registers
+ */
+export function playNewStoreAlertSound() {
+  if (isMuted) return;
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  try {
+    const now = ctx.currentTime;
+    const notes = [523.25, 659.25, 783.99]; // C5, E5, G5 major triad fanfare
+    notes.forEach((freq, idx) => {
+      const startTime = now + idx * 0.12;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, startTime);
+      gain.gain.setValueAtTime(0.4, startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.3);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(startTime);
+      osc.stop(startTime + 0.35);
+    });
+  } catch (e) {}
+}

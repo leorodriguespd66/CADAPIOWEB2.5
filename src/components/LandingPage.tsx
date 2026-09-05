@@ -18,7 +18,7 @@ interface LandingPageProps {
   adminSettings?: AdminSettings;
   onSelectStore: (slug: string) => void;
   onGoToAdmin: () => void;
-  onRegisterStore: (newStore: Store) => void;
+  onRegisterStore: (newStore: Store) => void | Promise<void>;
 }
 
 export default function LandingPage({ 
@@ -120,7 +120,7 @@ export default function LandingPage({
     setOwnerLogin(login);
   };
 
-  const handleRegisterSubmit = (e: React.FormEvent) => {
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!storeName || !ownerEmail || !ownerLogin || !ownerPassword || !whatsapp) {
       setErrorMsg('Todos os campos são obrigatórios.');
@@ -158,12 +158,18 @@ export default function LandingPage({
       isApproved: false, // BLOQUEADO até que o admin libere
       ownerEmail: ownerEmail.trim(),
       ownerLogin: ownerLogin.trim(),
-      ownerPassword: ownerPassword.trim()
+      ownerPassword: ownerPassword.trim(),
+      daysOnline: 30,
+      planExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
     };
 
-    onRegisterStore(newStore);
-    setSuccess(true);
-    setErrorMsg('');
+    try {
+      await onRegisterStore(newStore);
+      setSuccess(true);
+      setErrorMsg('');
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Erro ao cadastrar restaurante. Tente novamente.');
+    }
   };
 
   const resetForm = () => {

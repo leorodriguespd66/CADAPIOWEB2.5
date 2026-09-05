@@ -1051,6 +1051,11 @@ export default function AdminPanel({
             >
               <StoreIcon size={15} />
               <span>{isSuperAdmin ? 'Estabelecimentos' : 'Minha Loja'}</span>
+              {isSuperAdmin && stores.filter(s => s.isApproved === false).length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500 text-white font-black animate-pulse">
+                  {stores.filter(s => s.isApproved === false).length}
+                </span>
+              )}
             </button>
             {isSuperAdmin && (
               <button
@@ -1201,6 +1206,50 @@ export default function AdminPanel({
 
       {/* Main Scroller Content */}
       <main className="flex-1 overflow-y-auto p-4 sm:p-8 max-w-7xl mx-auto w-full">
+        {/* 🚨 ALERTA EM TEMPO REAL DE NOVO ESTABELECIMENTO CADASTRADO PARA O SUPER ADMIN */}
+        {isSuperAdmin && stores.some(s => s.isApproved === false) && (
+          <div className="mb-6 bg-linear-to-r from-amber-500 via-orange-500 to-amber-600 text-white p-4 sm:p-5 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl border border-amber-400/60 animate-fadeIn">
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+                <Sparkles size={24} className="text-white animate-pulse" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h4 className="font-extrabold text-base">
+                    {stores.filter(s => s.isApproved === false).length} Novo(s) Estabelecimento(s) Cadastrado(s)!
+                  </h4>
+                  <span className="px-2 py-0.5 rounded-full bg-white text-amber-800 font-black text-[10px] uppercase tracking-wider shadow-xs">
+                    Aguardando Liberação
+                  </span>
+                </div>
+                <p className="text-xs text-amber-100 mt-1 max-w-xl">
+                  {stores.filter(s => s.isApproved === false).map(s => s.name).join(', ')} — Clique em "Liberar Link" para disponibilizar a página pública e ativar as vendas.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {stores.find(s => s.isApproved === false) && (
+                <button
+                  onClick={() => {
+                    const first = stores.find(s => s.isApproved === false);
+                    if (first) handleApproveStore(first.id);
+                  }}
+                  className="px-4 py-2 bg-white text-amber-800 hover:bg-amber-50 font-black rounded-xl text-xs shadow-md transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check size={14} />
+                  <span>Liberar Link ({stores.find(s => s.isApproved === false)?.name})</span>
+                </button>
+              )}
+              <button
+                onClick={() => setActiveTab('stores')}
+                className="px-3.5 py-2 bg-amber-800/50 hover:bg-amber-800 text-white font-bold rounded-xl text-xs transition cursor-pointer"
+              >
+                Ver no Painel
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* NOTIFICAÇÃO DO PLANO E LINK DO ESTABELECIMENTO (5 DIAS RESTANTES OU EXPIRADO) */}
         {currentStore && (!isSuperAdmin || activeTab === 'pdv') && (() => {
           const planDetails = getStorePlanDetails(currentStore);
@@ -1317,14 +1366,41 @@ export default function AdminPanel({
 
                 {/* Stores grid list for Super Admin */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                  {stores.map(store => {
+                  {[...stores].sort((a, b) => {
+                    // Pending stores first
+                    if (a.isApproved === false && b.isApproved !== false) return -1;
+                    if (a.isApproved !== false && b.isApproved === false) return 1;
+                    return 0;
+                  }).map(store => {
                     const storeCategoriesCount = categories.filter(c => c.storeId === store.id).length;
                     const storeProductsCount = products.filter(p => p.storeId === store.id).length;
                     const isPassVisible = !!revealPasswordStoreId[store.id];
                     const planDetails = getStorePlanDetails(store);
+                    const isPendingApproval = store.isApproved === false;
 
                     return (
-                      <div key={store.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col justify-between hover:shadow-md transition">
+                      <div
+                        key={store.id}
+                        className={`bg-white rounded-2xl overflow-hidden flex flex-col justify-between transition ${
+                          isPendingApproval 
+                            ? 'border-2 border-amber-400 shadow-md ring-2 ring-amber-300/30' 
+                            : 'border border-slate-200 shadow-sm hover:shadow-md'
+                        }`}
+                      >
+                        {isPendingApproval && (
+                          <div className="bg-amber-500 text-white px-4 py-1.5 text-[10px] font-black uppercase tracking-wider flex items-center justify-between">
+                            <span className="flex items-center gap-1">
+                              <Sparkles size={12} />
+                              <span>Novo Cadastro - Aguardando Liberação</span>
+                            </span>
+                            <button
+                              onClick={() => handleApproveStore(store.id)}
+                              className="px-2 py-0.5 bg-white text-amber-800 rounded font-black text-[9px] hover:bg-amber-50 cursor-pointer shadow-xs"
+                            >
+                              Liberar Link Agora
+                            </button>
+                          </div>
+                        )}
                         <div className="p-5 space-y-4">
                           {/* Store Header */}
                           <div className="flex items-start gap-3.5">

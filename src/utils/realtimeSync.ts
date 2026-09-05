@@ -1,5 +1,5 @@
-import { Order } from '../types';
-import { startNewOrderAlarm, ensureAudioUnlocked } from './audioAlert';
+import { Order, Store, Category, Product } from '../types';
+import { startNewOrderAlarm, ensureAudioUnlocked, playNewStoreAlertSound } from './audioAlert';
 
 const BROADCAST_CHANNEL_NAME = 'cardapio_realtime_orders';
 
@@ -9,7 +9,7 @@ let originalDocumentTitle = typeof document !== 'undefined' ? document.title : '
 
 export function flashDocumentTitle(message: string, count = 10) {
   if (typeof document === 'undefined') return;
-  if (!originalDocumentTitle || originalDocumentTitle.includes('🔔')) {
+  if (!originalDocumentTitle || originalDocumentTitle.includes('🔔') || originalDocumentTitle.includes('🎉')) {
     originalDocumentTitle = 'Cardápio Web';
   }
 
@@ -80,6 +80,7 @@ export interface RealtimeDataPayload {
 }
 
 export type DataListener = (payload: RealtimeDataPayload) => void;
+export type StoreListener = (newStore: Store, allStores: Store[]) => void;
 
 export function deduplicateOrders(orders: Order[]): Order[] {
   if (!Array.isArray(orders)) return [];
@@ -114,9 +115,12 @@ class RealtimeOrderManager {
   private pollInterval: any = null;
   private listeners: Set<OrdersListener> = new Set();
   private dataListeners: Set<DataListener> = new Set();
+  private storeListeners: Set<StoreListener> = new Set();
   private lastKnownOrderIds: Set<string> = new Set();
   private lastKnownOrders: Order[] = [];
   private lastKnownSignature: string = '';
+  private lastKnownStoresSignature: string = '';
+  private lastKnownStoreIds: Set<string> = new Set();
   private lastKnownProductsSignature: string = '';
   private lastKnownAdminWhatsapp: string = '';
   private lastUserActionTime: number = 0;
@@ -137,6 +141,15 @@ class RealtimeOrderManager {
     this.lastKnownOrderIds = new Set(deduped.map(o => o.id));
   }
 
+  public setInitialStores(stores: Store[]) {
+    if (!Array.isArray(stores)) return;
+    this.lastKnownStoreIds = new Set(stores.map(s => s.id));
+    this.lastKnownStoresSignature = stores
+      .map(s => `${s.id}:${s.slug}:${s.isApproved}:${s.isBlocked}:${s.isActive}:${s.daysOnline}`)
+      .sort()
+      .join('|');
+  }
+
   public subscribe(listener: OrdersListener): () => void {
     this.listeners.add(listener);
     return () => {
@@ -148,6 +161,13 @@ class RealtimeOrderManager {
     this.dataListeners.add(listener);
     return () => {
       this.dataListeners.delete(listener);
+    };
+  }
+
+  public subscribeStores(listener: StoreListener): () => void {
+    this.storeListeners.add(listener);
+    return () => {
+      this.storeListeners.delete(listener);
     };
   }
 
@@ -175,6 +195,61 @@ class RealtimeOrderManager {
         console.error('Error notifying data listener:', err);
       }
     });
+  }
+
+  public handleIncomingStores(incomingStores: Store[], source = 'unknown', categories?: Category[], products?: Product[]) {
+    if (!Array.isArray(incomingStores) || incomingStores.length === 0) return;
+
+    const newSignature = incomingStores
+      .map(s => `${s.id}:${s.slug}:${s.isApproved}:${s.isBlocked}:${s.isActive}:${s.daysOnline}`)
+      .sort()
+      .join('|');
+
+    // If signature is identical and store count is unchanged, skip redundant work
+    if (newSignature === this.lastKnownStoresSignature && incomingStores.length === this.lastKnownStoreIds.size) {
+      return;
+    }
+
+    // Detect if a brand new store was added
+    let newlyRegisteredStore: Store | undefined;
+    if (this.lastKnownStoreIds.size > 0) {
+      newlyRegisteredStore = incomingStores.find(s => !this.lastKnownStoreIds.has(s.id));
+    }
+
+    this.lastKnownStoresSignature = newSignature;
+    this.lastKnownStoreIds = new Set(incomingStores.map(s => s.id));
+
+    // Update local persistence
+    try {
+      localStorage.setItem('cardapio_stores', JSON.stringify(incomingStores));
+      if (categories && Array.isArray(categories)) {
+        localStorage.setItem('cardapio_categories', JSON.stringify(categories));
+      }
+      if (products && Array.isArray(products)) {
+        localStorage.setItem('cardapio_products', JSON.stringify(products));
+      }
+    } catch (e) {}
+
+    // Notify all UI data listeners
+    this.notifyDataListeners({ stores: incomingStores, categories, products });
+
+    // If a brand new store was registered, sound alert and notify store listeners
+    if (newlyRegisteredStore) {
+      console.log(`[REALTIME] Novo estabelecimento detectado (${source}):`, newlyRegisteredStore.name);
+      playNewStoreAlertSound();
+      flashDocumentTitle(`🎉 Novo Estabelecimento: ${newlyRegisteredStore.name}!`, 8);
+      showSystemNotification(
+        'Novo Estabelecimento Cadastrado!',
+        `${newlyRegisteredStore.name} se cadastrou e aguarda liberação de link no painel.`
+      );
+      this.storeListeners.forEach(fn => {
+        try {
+          fn(newlyRegisteredStore!, incomingStores);
+        } catch (err) {
+          console.error('Error in store listener:', err);
+        }
+      });
+    }
   }
 
   private handleIncomingOrders(incomingOrders: Order[], source = 'unknown') {
@@ -227,7 +302,12 @@ class RealtimeOrderManager {
           } else if (data && data.type === 'NEW_ORDER' && data.order) {
             const updated = [data.order, ...this.lastKnownOrders.filter(o => o.id !== data.order.id)];
             this.handleIncomingOrders(updated, 'broadcast');
+          } else if (data && data.type === 'NEW_STORE_REGISTERED' && Array.isArray(data.stores)) {
+            this.handleIncomingStores(data.stores, 'broadcast', data.categories, data.products);
           } else if (data && data.type === 'DATA_UPDATED') {
+            if (data.stores && Array.isArray(data.stores)) {
+              this.handleIncomingStores(data.stores, 'broadcast', data.categories, data.products);
+            }
             this.notifyDataListeners(data);
           }
         };
@@ -249,6 +329,13 @@ class RealtimeOrderManager {
         } catch (e) {
           // ignore parse error
         }
+      } else if (event.key === 'cardapio_stores' && event.newValue) {
+        try {
+          const stores = JSON.parse(event.newValue);
+          if (Array.isArray(stores)) {
+            this.handleIncomingStores(stores, 'storage_event');
+          }
+        } catch (e) {}
       } else if (event.key === 'cardapio_products' && event.newValue) {
         try {
           const products = JSON.parse(event.newValue);
@@ -276,8 +363,17 @@ class RealtimeOrderManager {
       this.sseSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          if (data && data.type === 'INIT') {
+            if (Array.isArray(data.orders)) this.handleIncomingOrders(data.orders, 'sse_init');
+            if (Array.isArray(data.stores)) this.handleIncomingStores(data.stores, 'sse_init', data.categories, data.products);
+          }
           if (data && Array.isArray(data.orders)) {
             this.handleIncomingOrders(data.orders, 'sse');
+          }
+          if (data && (data.type === 'NEW_STORE_REGISTERED' || data.type === 'DATA_UPDATED')) {
+            if (Array.isArray(data.stores)) {
+              this.handleIncomingStores(data.stores, 'sse_store', data.categories, data.products);
+            }
           }
           if (data && data.type === 'DATA_UPDATED') {
             this.notifyDataListeners(data);
@@ -295,7 +391,7 @@ class RealtimeOrderManager {
     }
   }
 
-  // 4. Stable safety heartbeat: polls server every 4s without redundant localStorage parsing
+  // 4. Stable safety heartbeat: polls server every 3.5s without redundant localStorage parsing
   private startPolling() {
     this.pollInterval = setInterval(async () => {
       try {
@@ -309,6 +405,17 @@ class RealtimeOrderManager {
       } catch (e) {
         // server might be booting or offline
       }
+
+      // Heartbeat sync for stores & catalog across all devices
+      try {
+        const storesRes = await fetch(`/api/stores?_t=${Date.now()}`, { cache: 'no-store' });
+        if (storesRes.ok) {
+          const storesData = await storesRes.json();
+          if (storesData && Array.isArray(storesData.stores)) {
+            this.handleIncomingStores(storesData.stores, 'poll', storesData.categories, storesData.products);
+          }
+        }
+      } catch (e) {}
 
       // Heartbeat sync for admin settings across all devices
       try {
@@ -328,7 +435,49 @@ class RealtimeOrderManager {
       } catch (e) {
         // ignore fetch error
       }
-    }, 4000);
+    }, 3500);
+  }
+
+  // Register new store directly on server with real-time push to all sessions
+  public async registerStore(newStore: Store, defaultCat?: Category, defaultProd?: Product): Promise<{ success: boolean; store: Store; stores: Store[]; categories?: Category[]; products?: Product[] }> {
+    try {
+      const res = await fetch('/api/stores/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          newStore,
+          defaultCategory: defaultCat,
+          defaultProduct: defaultProd
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.stores)) {
+          this.handleIncomingStores(data.stores, 'register_success', data.categories, data.products);
+          if (this.broadcastChannel) {
+            try {
+              this.broadcastChannel.postMessage({
+                type: 'NEW_STORE_REGISTERED',
+                store: data.store,
+                stores: data.stores,
+                categories: data.categories,
+                products: data.products
+              });
+            } catch (e) {}
+          }
+          return data;
+        }
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || 'Erro ao registrar estabelecimento');
+      }
+    } catch (err: any) {
+      console.warn('Network registration error, falling back:', err);
+      throw err;
+    }
+
+    return { success: false, store: newStore, stores: [] };
   }
 
   // Send new order to all clients and server

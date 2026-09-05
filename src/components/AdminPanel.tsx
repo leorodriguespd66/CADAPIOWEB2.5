@@ -1,11 +1,11 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Plus, Edit2, Trash2, Settings, Utensils, ExternalLink, LogOut, Check, X,
   Briefcase, FolderPlus, HelpCircle, Save, Key, Lock, User, Eye, EyeOff, ArrowLeft,
   ChevronRight, ToggleLeft, ToggleRight, List, ShoppingCart, DollarSign, Clock,
   Copy, Share2, Send, Sparkles, CheckCircle2, ShieldCheck, Store as StoreIcon,
-  Bot, Receipt, Bell, Flame, Star, ShieldAlert, AlertTriangle, MessageCircle, Bike, MapPin
+  Bot, Receipt, Bell, Flame, Star, ShieldAlert, AlertTriangle, MessageCircle, Bike, MapPin, RefreshCw
 } from 'lucide-react';
 import { Store, Category, Product, AdminSettings, ProductOption, OptionChoice, NeighborhoodFee, Order, OrderStatus, CashTransaction, Motoboy } from '../types';
 import { ImageUploadField } from './ImageUploadField';
@@ -60,7 +60,12 @@ export default function AdminPanel({
   const [isSuperAdmin, setIsSuperAdmin] = useState(true);
 
   // Dashboard Tabs: 'pdv' | 'stores' | 'menu-editor' | 'bot-settings' | 'motoboys' | 'flyer-maker' | 'settings'
-  const [activeTab, setActiveTab] = useState<'pdv' | 'stores' | 'menu-editor' | 'bot-settings' | 'motoboys' | 'flyer-maker' | 'settings'>('pdv');
+  const [activeTab, setActiveTab] = useState<'pdv' | 'stores' | 'menu-editor' | 'bot-settings' | 'motoboys' | 'flyer-maker' | 'settings'>('stores');
+
+  // Real-time new store alert modal & refresh state
+  const [newStoreRealtimeAlert, setNewStoreRealtimeAlert] = useState<Store | null>(null);
+  const [isRefreshingStores, setIsRefreshingStores] = useState(false);
+  const knownStoreIdsRef = useRef<Set<string>>(new Set(stores.map(s => s.id)));
 
   // Multi-Store Editor States
   const [selectedStoreId, setSelectedStoreId] = useState<string>(stores[0]?.id || '');
@@ -191,6 +196,45 @@ export default function AdminPanel({
     };
   }, []);
 
+  // Real-time listener for newly registered stores across all devices
+  useEffect(() => {
+    const unsub = realtimeOrderManager.subscribeStores((newlyRegistered) => {
+      if (isAuthenticated && isSuperAdmin) {
+        setNewStoreRealtimeAlert(newlyRegistered);
+        showToast(`🎉 Novo estabelecimento cadastrado: ${newlyRegistered.name}!`);
+      }
+    });
+    return () => unsub();
+  }, [isAuthenticated, isSuperAdmin]);
+
+  // Track stores prop updates from server polling or SSE
+  useEffect(() => {
+    if (isAuthenticated && isSuperAdmin) {
+      const newStore = stores.find(s => !knownStoreIdsRef.current.has(s.id));
+      if (newStore) {
+        setNewStoreRealtimeAlert(newStore);
+        showToast(`🎉 Novo estabelecimento cadastrado: ${newStore.name}!`);
+      }
+    }
+    knownStoreIdsRef.current = new Set(stores.map(s => s.id));
+  }, [stores, isAuthenticated, isSuperAdmin]);
+
+  const handleManualRefreshStores = async () => {
+    setIsRefreshingStores(true);
+    try {
+      const refreshed = await realtimeOrderManager.refreshStoresNow();
+      if (refreshed && refreshed.length > 0) {
+        showToast('Estabelecimentos sincronizados em tempo real!');
+      } else {
+        showToast('Tudo sincronizado em tempo real!');
+      }
+    } catch (e) {
+      showToast('Erro ao sincronizar estabelecimentos.');
+    } finally {
+      setTimeout(() => setIsRefreshingStores(false), 500);
+    }
+  };
+
   // URL Helper functions for sales page & admin link
   const getSalesPageUrl = (slug: string) => {
     if (typeof window === 'undefined') return `#${slug}`;
@@ -257,6 +301,7 @@ export default function AdminPanel({
     if (inputUser === adminSettings.adminLogin && inputPass === adminSettings.adminPass) {
       setIsSuperAdmin(true);
       setIsAuthenticated(true);
+      setActiveTab('stores');
       setLoginError('');
       if (stores.length > 0) {
         setSelectedStoreId(stores[0].id);
@@ -482,7 +527,10 @@ export default function AdminPanel({
     showToast('Estabelecimento excluído com sucesso!');
 
     try {
-      await realtimeOrderManager.deleteStore(storeId);
+      const res = await realtimeOrderManager.deleteStore(storeId);
+      if (res && Array.isArray(res.stores)) {
+        onUpdateData(res.stores, res.categories || updatedCategories, res.products || updatedProducts, adminSettings);
+      }
     } catch (e) {
       console.warn('Erro ao deletar estabelecimento:', e);
     }
@@ -1007,6 +1055,20 @@ export default function AdminPanel({
           </div>
 
           <nav className="hidden md:flex space-x-1 text-sm font-medium">
+            {isSuperAdmin && (
+              <button
+                onClick={() => setActiveTab('stores')}
+                className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center space-x-1.5 ${activeTab === 'stores' ? 'bg-white/10 text-white' : 'text-slate-300 hover:text-white'}`}
+              >
+                <StoreIcon size={15} />
+                <span>Estabelecimentos</span>
+                {stores.filter(s => s.isApproved === false).length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500 text-white font-black animate-pulse">
+                    {stores.filter(s => s.isApproved === false).length}
+                  </span>
+                )}
+              </button>
+            )}
             <button
               onClick={() => setActiveTab('pdv')}
               className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center space-x-1.5 ${activeTab === 'pdv' ? 'bg-white/10 text-white' : 'text-slate-300 hover:text-white'}`}
@@ -1055,18 +1117,15 @@ export default function AdminPanel({
               <Sparkles size={15} className="text-amber-400" />
               <span>Criador de Encartes</span>
             </button>
-            <button
-              onClick={() => setActiveTab('stores')}
-              className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center space-x-1.5 ${activeTab === 'stores' ? 'bg-white/10 text-white' : 'text-slate-300 hover:text-white'}`}
-            >
-              <StoreIcon size={15} />
-              <span>{isSuperAdmin ? 'Estabelecimentos' : 'Minha Loja'}</span>
-              {isSuperAdmin && stores.filter(s => s.isApproved === false).length > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500 text-white font-black animate-pulse">
-                  {stores.filter(s => s.isApproved === false).length}
-                </span>
-              )}
-            </button>
+            {!isSuperAdmin && (
+              <button
+                onClick={() => setActiveTab('stores')}
+                className={`px-3.5 py-2 rounded-lg transition cursor-pointer flex items-center space-x-1.5 ${activeTab === 'stores' ? 'bg-white/10 text-white' : 'text-slate-300 hover:text-white'}`}
+              >
+                <StoreIcon size={15} />
+                <span>Minha Loja</span>
+              </button>
+            )}
             {isSuperAdmin && (
               <button
                 onClick={() => setActiveTab('settings')}
@@ -1099,6 +1158,17 @@ export default function AdminPanel({
 
       {/* Mobile Nav tab list */}
       <div className="bg-slate-800 text-slate-300 text-xs font-semibold flex md:hidden border-t border-slate-700 overflow-x-auto scrollbar-none">
+        {isSuperAdmin && (
+          <button
+            onClick={() => setActiveTab('stores')}
+            className={`flex-1 min-w-[75px] text-center py-2.5 border-b-2 transition flex items-center justify-center space-x-1 ${activeTab === 'stores' ? 'border-orange-500 text-white bg-slate-900/30' : 'border-transparent'}`}
+          >
+            <span>Lojas</span>
+            {stores.filter(s => s.isApproved === false).length > 0 && (
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+            )}
+          </button>
+        )}
         <button
           onClick={() => setActiveTab('pdv')}
           className={`flex-1 min-w-[70px] text-center py-2.5 border-b-2 transition flex items-center justify-center space-x-1 ${activeTab === 'pdv' ? 'border-orange-500 text-white bg-slate-900/30' : 'border-transparent'}`}
@@ -1136,12 +1206,14 @@ export default function AdminPanel({
           <Sparkles size={13} className="text-amber-400" />
           <span>Encartes</span>
         </button>
-        <button
-          onClick={() => setActiveTab('stores')}
-          className={`flex-1 min-w-[75px] text-center py-2.5 border-b-2 transition ${activeTab === 'stores' ? 'border-orange-500 text-white bg-slate-900/30' : 'border-transparent'}`}
-        >
-          {isSuperAdmin ? 'Lojas' : 'Loja'}
-        </button>
+        {!isSuperAdmin && (
+          <button
+            onClick={() => setActiveTab('stores')}
+            className={`flex-1 min-w-[75px] text-center py-2.5 border-b-2 transition ${activeTab === 'stores' ? 'border-orange-500 text-white bg-slate-900/30' : 'border-transparent'}`}
+          >
+            Loja
+          </button>
+        )}
         {isSuperAdmin && (
           <button
             onClick={() => setActiveTab('settings')}
@@ -1358,20 +1430,37 @@ export default function AdminPanel({
               <div className="space-y-6">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                   <div>
-                    <h2 className="text-xl font-bold text-slate-800">
-                      Estabelecimentos & Clientes Cadastrados
-                    </h2>
+                    <div className="flex items-center gap-2.5">
+                      <h2 className="text-xl font-bold text-slate-800">
+                        Estabelecimentos & Clientes Cadastrados
+                      </h2>
+                      <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-semibold">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                        <span>Tempo Real Ativo</span>
+                      </span>
+                    </div>
                     <p className="text-xs text-slate-500 mt-1">
                       Gerencie seus clientes, visualize as páginas de vendas, libere links e controle os acessos de cada lojista.
                     </p>
                   </div>
-                  <button
-                    onClick={handleOpenCreateStore}
-                    className="flex items-center space-x-1.5 px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold rounded-xl shadow-md transition cursor-pointer"
-                  >
-                    <Plus size={16} />
-                    <span>Adicionar Novo Cliente</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleManualRefreshStores}
+                      disabled={isRefreshingStores}
+                      className="flex items-center space-x-1.5 px-3 py-2.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-60"
+                      title="Sincronizar lojas em tempo real agora"
+                    >
+                      <RefreshCw size={14} className={isRefreshingStores ? 'animate-spin text-orange-500' : 'text-slate-500'} />
+                      <span>{isRefreshingStores ? 'Atualizando...' : 'Atualizar Lojas'}</span>
+                    </button>
+                    <button
+                      onClick={handleOpenCreateStore}
+                      className="flex items-center space-x-1.5 px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold rounded-xl shadow-md transition cursor-pointer"
+                    >
+                      <Plus size={16} />
+                      <span>Adicionar Novo Cliente</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Stores grid list for Super Admin */}
@@ -3464,6 +3553,108 @@ export default function AdminPanel({
                 </div>
               </motion.div>
             </div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ----------------------------------------------------
+          REAL-TIME NEW STORE REGISTERED ALERT MODAL FOR SUPER ADMIN
+         ---------------------------------------------------- */}
+      <AnimatePresence>
+        {newStoreRealtimeAlert && (
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl border-2 border-amber-400"
+            >
+              <div className="bg-linear-to-r from-amber-500 via-orange-500 to-amber-600 p-5 text-white flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+                    <Sparkles size={22} className="text-white animate-pulse" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider bg-white text-amber-900 px-2 py-0.5 rounded-full">
+                      Tempo Real
+                    </span>
+                    <h3 className="font-extrabold text-base leading-tight mt-0.5">Novo Estabelecimento Cadastrado!</h3>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setNewStoreRealtimeAlert(null)}
+                  className="p-1.5 rounded-full hover:bg-white/20 text-white transition cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <div className="flex items-center space-x-3.5 p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
+                  <img
+                    src={newStoreRealtimeAlert.logoUrl || "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=300&q=80"}
+                    alt={newStoreRealtimeAlert.name}
+                    className="w-14 h-14 rounded-xl object-cover border border-slate-200 shrink-0"
+                    referrerPolicy="no-referrer"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <h4 className="font-black text-slate-900 text-base truncate">{newStoreRealtimeAlert.name}</h4>
+                    <p className="text-xs text-slate-500 font-mono mt-0.5 truncate">slug: {newStoreRealtimeAlert.slug}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200">
+                        Aguardando Liberação
+                      </span>
+                      {newStoreRealtimeAlert.phone && (
+                        <span className="text-[11px] text-slate-600">
+                          {newStoreRealtimeAlert.phone}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-amber-50/80 rounded-2xl p-4 border border-amber-200/70 text-xs text-amber-950 space-y-1.5">
+                  <p className="font-bold flex items-center gap-1.5 text-amber-900">
+                    <Check size={15} className="text-amber-700" />
+                    <span>Acesso do lojista criado:</span>
+                  </p>
+                  <p className="font-mono text-[11px] text-slate-700">
+                    Usuário: <strong>{newStoreRealtimeAlert.ownerLogin || newStoreRealtimeAlert.slug}</strong> | Senha: <strong>{newStoreRealtimeAlert.ownerPassword || '123'}</strong>
+                  </p>
+                  <p className="text-[11px] text-slate-600 mt-1">
+                    Para que o cardápio público fique visível para os clientes e na página inicial, clique em <strong>Liberar Link Agora</strong>.
+                  </p>
+                </div>
+
+                <div className="space-y-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await handleApproveStore(newStoreRealtimeAlert.id);
+                      setNewStoreRealtimeAlert(null);
+                      setActiveTab('stores');
+                    }}
+                    className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-md transition flex items-center justify-center space-x-2 cursor-pointer"
+                  >
+                    <Check size={16} />
+                    <span>Liberar Link de Vendas Agora (1 Clique)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedStoreId(newStoreRealtimeAlert.id);
+                      setActiveTab('stores');
+                      setNewStoreRealtimeAlert(null);
+                    }}
+                    className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition flex items-center justify-center space-x-2 cursor-pointer"
+                  >
+                    <StoreIcon size={15} />
+                    <span>Ver no Painel Geral de Estabelecimentos</span>
+                  </button>
+                </div>
+              </div>
+            </motion.div>
           </div>
         )}
       </AnimatePresence>

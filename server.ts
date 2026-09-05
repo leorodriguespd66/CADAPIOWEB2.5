@@ -192,6 +192,15 @@ app.get("/api/stores", (req, res) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const raw = fs.readFileSync(DATA_FILE, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed.stores)) appData.stores = parsed.stores;
+      if (Array.isArray(parsed.categories)) appData.categories = parsed.categories;
+      if (Array.isArray(parsed.products)) appData.products = parsed.products;
+    }
+  } catch (e) {}
   res.json({
     stores: appData.stores || [],
     categories: appData.categories || [],
@@ -322,6 +331,17 @@ app.delete("/api/stores/:id", (req, res) => {
     return res.status(400).json({ error: "ID do estabelecimento não fornecido." });
   }
 
+  // Reload current data from disk to ensure safety
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const raw = fs.readFileSync(DATA_FILE, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed.stores)) appData.stores = parsed.stores;
+      if (Array.isArray(parsed.categories)) appData.categories = parsed.categories;
+      if (Array.isArray(parsed.products)) appData.products = parsed.products;
+    }
+  } catch (e) {}
+
   const deletedStore = appData.stores.find(s => s.id === id || s.slug === id);
   appData.stores = appData.stores.filter(s => s.id !== id && s.slug !== id);
   appData.categories = appData.categories.filter(c => c.storeId !== id);
@@ -361,6 +381,17 @@ app.delete("/api/stores/:id", (req, res) => {
 // Approve store endpoint (liberar link do estabelecimento)
 app.patch("/api/stores/:id/approve", (req, res) => {
   const { id } = req.params;
+  
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const raw = fs.readFileSync(DATA_FILE, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed.stores)) appData.stores = parsed.stores;
+      if (Array.isArray(parsed.categories)) appData.categories = parsed.categories;
+      if (Array.isArray(parsed.products)) appData.products = parsed.products;
+    }
+  } catch (e) {}
+
   let approvedStore: any = null;
 
   appData.stores = appData.stores.map(s => {

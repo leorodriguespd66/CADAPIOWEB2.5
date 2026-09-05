@@ -53,10 +53,14 @@ export default function App() {
       if (payload.products) setProducts(payload.products);
       if (payload.stores) {
         setStores(payload.stores);
+        try {
+          localStorage.setItem('cardapio_stores', JSON.stringify(payload.stores));
+        } catch {}
         // If current active store was deleted, automatically kick user back to landing page
         if (activeStoreSlug && !payload.stores.some(s => s.slug === activeStoreSlug)) {
           setActiveStoreSlug(null);
           setCurrentView('landing');
+          window.location.hash = '';
         }
       }
       if (payload.categories) setCategories(payload.categories);
@@ -70,7 +74,7 @@ export default function App() {
       if (payload.orders) setOrders(payload.orders);
     });
 
-    realtimeOrderManager.setInitialStores(stores);
+    realtimeOrderManager.setInitialStores(data.stores);
 
     // Request native browser desktop notifications
     requestNotificationPermission();
@@ -87,9 +91,12 @@ export default function App() {
           if (Array.isArray(serverData.products) && serverData.products.length > 0) {
             setProducts(serverData.products);
           }
-          if (Array.isArray(serverData.stores) && serverData.stores.length > 0) {
+          if (Array.isArray(serverData.stores)) {
             setStores(serverData.stores);
             realtimeOrderManager.setInitialStores(serverData.stores);
+            try {
+              localStorage.setItem('cardapio_stores', JSON.stringify(serverData.stores));
+            } catch {}
           }
           if (Array.isArray(serverData.categories) && serverData.categories.length > 0) {
             setCategories(serverData.categories);

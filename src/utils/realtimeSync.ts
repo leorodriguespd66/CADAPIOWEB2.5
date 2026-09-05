@@ -198,22 +198,24 @@ class RealtimeOrderManager {
   }
 
   public handleIncomingStores(incomingStores: Store[], source = 'unknown', categories?: Category[], products?: Product[]) {
-    if (!Array.isArray(incomingStores) || incomingStores.length === 0) return;
+    if (!Array.isArray(incomingStores)) return;
 
     const newSignature = incomingStores
       .map(s => `${s.id}:${s.slug}:${s.isApproved}:${s.isBlocked}:${s.isActive}:${s.daysOnline}`)
       .sort()
       .join('|');
 
-    // If signature is identical and store count is unchanged, skip redundant work
-    if (newSignature === this.lastKnownStoresSignature && incomingStores.length === this.lastKnownStoreIds.size) {
-      return;
-    }
-
     // Detect if a brand new store was added
     let newlyRegisteredStore: Store | undefined;
     if (this.lastKnownStoreIds.size > 0) {
       newlyRegisteredStore = incomingStores.find(s => !this.lastKnownStoreIds.has(s.id));
+    }
+
+    const hasChanges = newSignature !== this.lastKnownStoresSignature || incomingStores.length !== this.lastKnownStoreIds.size;
+
+    // If signature is identical, count is unchanged, and not an explicit/manual trigger, skip
+    if (!hasChanges && !source.includes('delete') && !source.includes('register') && !source.includes('manual')) {
+      return;
     }
 
     this.lastKnownStoresSignature = newSignature;
@@ -445,7 +447,24 @@ class RealtimeOrderManager {
       } catch (e) {
         // ignore fetch error
       }
-    }, 3500);
+    }, 2000);
+  }
+
+  // Force an immediate refresh of stores and catalog from server
+  public async refreshStoresNow(): Promise<Store[]> {
+    try {
+      const res = await fetch(`/api/stores?_t=${Date.now()}`, { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.stores)) {
+          this.handleIncomingStores(data.stores, 'manual_refresh', data.categories, data.products);
+          return data.stores;
+        }
+      }
+    } catch (e) {
+      console.warn('Manual stores refresh error:', e);
+    }
+    return [];
   }
 
   // Register new store directly on server with real-time push to all sessions

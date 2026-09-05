@@ -95,6 +95,25 @@ function saveData(data: AppData) {
 
 let appData = loadData();
 
+function getFreshData(): AppData {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const raw = fs.readFileSync(DATA_FILE, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed.stores)) appData.stores = parsed.stores;
+      if (Array.isArray(parsed.categories)) appData.categories = parsed.categories;
+      if (Array.isArray(parsed.products)) appData.products = parsed.products;
+      if (Array.isArray(parsed.orders)) appData.orders = deduplicateOrders(parsed.orders);
+      if (Array.isArray(parsed.cashTransactions)) appData.cashTransactions = parsed.cashTransactions;
+      if (parsed.adminSettings && parsed.adminSettings.adminLogin) appData.adminSettings = parsed.adminSettings;
+      if (Array.isArray(parsed.motoboys)) appData.motoboys = parsed.motoboys;
+    }
+  } catch (e) {
+    console.error("Error reloading fresh data from disk:", e);
+  }
+  return appData;
+}
+
 // SSE Clients for instant real-time push to all connected browsers/devices
 interface SSEClient {
   id: number;
@@ -192,15 +211,7 @@ app.get("/api/stores", (req, res) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
-  try {
-    if (fs.existsSync(DATA_FILE)) {
-      const raw = fs.readFileSync(DATA_FILE, "utf-8");
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed.stores)) appData.stores = parsed.stores;
-      if (Array.isArray(parsed.categories)) appData.categories = parsed.categories;
-      if (Array.isArray(parsed.products)) appData.products = parsed.products;
-    }
-  } catch (e) {}
+  getFreshData();
   res.json({
     stores: appData.stores || [],
     categories: appData.categories || [],
@@ -318,6 +329,71 @@ app.post("/api/stores/register", (req, res) => {
   res.status(201).json({
     success: true,
     store: registeredStore,
+    stores: appData.stores,
+    categories: appData.categories,
+    products: appData.products
+  });
+});
+
+// Save or update store (super admin creates or edits store in Admin Panel)
+app.post("/api/stores", (req, res) => {
+  const { store, defaultCategory, defaultProduct, stores: fullStores } = req.body;
+  getFreshData();
+
+  if (Array.isArray(fullStores)) {
+    appData.stores = fullStores;
+    saveData(appData);
+    broadcastData(appData);
+    return res.json({ success: true, stores: appData.stores });
+  }
+
+  if (!store || !store.id) {
+    return res.status(400).json({ error: "Dados do estabelecimento inválidos." });
+  }
+
+  const existingIndex = appData.stores.findIndex(s => s.id === store.id);
+  const isNew = existingIndex === -1;
+  if (isNew) {
+    appData.stores = [...appData.stores, store];
+  } else {
+    appData.stores = appData.stores.map(s => s.id === store.id ? { ...s, ...store } : s);
+  }
+
+  if (defaultCategory) {
+    const catExists = appData.categories.some(c => c.id === defaultCategory.id);
+    if (!catExists) {
+      appData.categories = [...appData.categories, defaultCategory];
+    }
+  }
+
+  if (defaultProduct) {
+    const prodExists = appData.products.some(p => p.id === defaultProduct.id);
+    if (!prodExists) {
+      appData.products = [...appData.products, defaultProduct];
+    }
+  }
+
+  saveData(appData);
+  broadcastData(appData);
+
+  // Broadcast to SSE
+  const eventMsg = JSON.stringify({
+    type: isNew ? "NEW_STORE_REGISTERED" : "DATA_UPDATED",
+    store,
+    stores: appData.stores,
+    categories: appData.categories,
+    products: appData.products,
+    timestamp: Date.now()
+  });
+  sseClients.forEach(client => {
+    try {
+      client.res.write(`data: ${eventMsg}\n\n`);
+    } catch (e) {}
+  });
+
+  res.json({
+    success: true,
+    store,
     stores: appData.stores,
     categories: appData.categories,
     products: appData.products
@@ -497,11 +573,54 @@ app.patch("/api/orders/:id/status", (req, res) => {
   }
 });
 
+// Authoritative Admin / Store Owner Login validation
+app.post("/api/admin/login", (req, res) => {
+  const { username, password } = req.body;
+  const cleanUser = (username || '').trim();
+  const cleanPass = (password || '').trim();
+
+  if (!cleanUser || !cleanPass) {
+    return res.status(400).json({ success: false, error: "Usuário e senha são obrigatórios." });
+  }
+
+  getFreshData();
+
+  const currentAdmin = appData.adminSettings || DEFAULT_ADMIN_SETTINGS;
+  // Authoritative check against active super admin credentials
+  if (cleanUser === currentAdmin.adminLogin && cleanPass === currentAdmin.adminPass) {
+    return res.json({
+      success: true,
+      role: "superadmin",
+      adminSettings: currentAdmin
+    });
+  }
+
+  // Check store owner credentials across all stores
+  const matchedStore = appData.stores.find(
+    s => s.ownerLogin && s.ownerLogin.toLowerCase() === cleanUser.toLowerCase() && s.ownerPassword === cleanPass
+  );
+
+  if (matchedStore) {
+    return res.json({
+      success: true,
+      role: "store_owner",
+      store: matchedStore
+    });
+  }
+
+  // Explicitly deny invalid credentials (prevents old passwords from working)
+  return res.status(401).json({
+    success: false,
+    error: "Usuário ou senha incorretos."
+  });
+});
+
 // Full database sync
 app.get("/api/data", (req, res) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
+  getFreshData();
   res.json(appData);
 });
 
@@ -510,42 +629,67 @@ app.get("/api/admin-settings", (req, res) => {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
+  getFreshData();
   res.json(appData.adminSettings || DEFAULT_ADMIN_SETTINGS);
 });
 
 app.post("/api/admin-settings", (req, res) => {
   const { adminLogin, adminPass, superAdminWhatsapp } = req.body;
+  if (!adminLogin || !adminPass) {
+    return res.status(400).json({ error: "Usuário e senha não podem ser em branco." });
+  }
+
+  getFreshData();
+
   let cleanPhone = (superAdminWhatsapp || '').replace(/\D/g, '');
   if (cleanPhone && !cleanPhone.startsWith('55') && (cleanPhone.length === 10 || cleanPhone.length === 11)) {
     cleanPhone = '55' + cleanPhone;
   }
 
   appData.adminSettings = {
-    adminLogin: adminLogin || appData.adminSettings?.adminLogin || 'admin',
-    adminPass: adminPass || appData.adminSettings?.adminPass || 'admin',
+    adminLogin: String(adminLogin).trim(),
+    adminPass: String(adminPass).trim(),
     superAdminWhatsapp: cleanPhone || appData.adminSettings?.superAdminWhatsapp || '5594992944888'
   };
 
   saveData(appData);
   broadcastData(appData);
+
+  // Broadcast specific ADMIN_SETTINGS_UPDATED event to all SSE clients instantly
+  const sseMsg = JSON.stringify({
+    type: "ADMIN_SETTINGS_UPDATED",
+    adminSettings: appData.adminSettings,
+    timestamp: Date.now()
+  });
+  sseClients.forEach(client => {
+    try {
+      client.res.write(`data: ${sseMsg}\n\n`);
+    } catch (err) {}
+  });
+
+  console.log(`[ADMIN SETTINGS UPDATED] Credenciais do Administrador Geral atualizadas: ${appData.adminSettings.adminLogin}`);
+
   res.json({ success: true, adminSettings: appData.adminSettings });
 });
 
 app.post("/api/data", (req, res) => {
-  const { stores, categories, products, adminSettings, orders, cashTransactions, motoboys } = req.body;
-  if (stores) appData.stores = stores;
-  if (categories) appData.categories = categories;
-  if (products) appData.products = products;
-  if (adminSettings) {
-    let cleanPhone = (adminSettings.superAdminWhatsapp || '').replace(/\D/g, '');
-    if (cleanPhone && !cleanPhone.startsWith('55') && (cleanPhone.length === 10 || cleanPhone.length === 11)) {
-      cleanPhone = '55' + cleanPhone;
+  getFreshData();
+  const { stores, categories, products, orders, cashTransactions, motoboys } = req.body;
+
+  if (Array.isArray(stores)) {
+    // Smart merge: don't let a client that hasn't received newly registered stores wipe them from the server
+    const incomingMap = new Map(stores.map(s => [s.id, s]));
+    const merged = stores.slice();
+    for (const s of appData.stores) {
+      if (!incomingMap.has(s.id)) {
+        merged.push(s);
+      }
     }
-    appData.adminSettings = {
-      ...adminSettings,
-      superAdminWhatsapp: cleanPhone || adminSettings.superAdminWhatsapp || '5594992944888'
-    };
+    appData.stores = merged;
   }
+  if (Array.isArray(categories)) appData.categories = categories;
+  if (Array.isArray(products)) appData.products = products;
+  // NOTE: adminSettings is deliberately NOT modified here to prevent stale client localStorages from reverting new admin passwords
   if (orders) appData.orders = deduplicateOrders(orders);
   if (cashTransactions) appData.cashTransactions = cashTransactions;
   if (motoboys) appData.motoboys = motoboys;

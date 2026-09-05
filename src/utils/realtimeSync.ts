@@ -122,6 +122,8 @@ class RealtimeOrderManager {
   private lastKnownStoresSignature: string = '';
   private lastKnownStoreIds: Set<string> = new Set();
   private lastKnownProductsSignature: string = '';
+  private lastKnownAdminLogin: string = '';
+  private lastKnownAdminPass: string = '';
   private lastKnownAdminWhatsapp: string = '';
   private lastUserActionTime: number = 0;
 
@@ -182,7 +184,9 @@ class RealtimeOrderManager {
   }
 
   private notifyDataListeners(payload: RealtimeDataPayload) {
-    if (payload.adminSettings && payload.adminSettings.superAdminWhatsapp) {
+    if (payload.adminSettings && payload.adminSettings.adminLogin) {
+      this.lastKnownAdminLogin = payload.adminSettings.adminLogin;
+      this.lastKnownAdminPass = payload.adminSettings.adminPass;
       this.lastKnownAdminWhatsapp = payload.adminSettings.superAdminWhatsapp;
       try {
         localStorage.setItem('cardapio_admin_settings', JSON.stringify(payload.adminSettings));
@@ -386,9 +390,16 @@ class RealtimeOrderManager {
             if (Array.isArray(data.stores)) {
               this.handleIncomingStores(data.stores, `sse_${data.type.toLowerCase()}`, data.categories, data.products);
             }
+            this.notifyDataListeners({ stores: data.stores, categories: data.categories, products: data.products });
           }
-          if (data && (data.type === 'DATA_UPDATED' || data.type === 'STORE_DELETED' || data.type === 'STORE_APPROVED')) {
-            this.notifyDataListeners(data);
+          if (data && data.type === 'ADMIN_SETTINGS_UPDATED' && data.adminSettings) {
+            this.lastKnownAdminLogin = data.adminSettings.adminLogin;
+            this.lastKnownAdminPass = data.adminSettings.adminPass;
+            this.lastKnownAdminWhatsapp = data.adminSettings.superAdminWhatsapp;
+            try {
+              localStorage.setItem('cardapio_admin_settings', JSON.stringify(data.adminSettings));
+            } catch {}
+            this.notifyDataListeners({ adminSettings: data.adminSettings });
           }
         } catch (e) {
           // ignore parse error
@@ -403,7 +414,7 @@ class RealtimeOrderManager {
     }
   }
 
-  // 4. Stable safety heartbeat: polls server every 3.5s without redundant localStorage parsing
+  // 4. Stable safety heartbeat: polls server every 2s without redundant localStorage parsing
   private startPolling() {
     this.pollInterval = setInterval(async () => {
       try {
@@ -429,13 +440,21 @@ class RealtimeOrderManager {
         }
       } catch (e) {}
 
-      // Heartbeat sync for admin settings across all devices
+      // Heartbeat sync for admin credentials & settings across all devices
       try {
         const adminRes = await fetch(`/api/admin-settings?_t=${Date.now()}`, { cache: 'no-store' });
         if (adminRes.ok) {
           const adminData = await adminRes.json();
-          if (adminData && adminData.superAdminWhatsapp) {
-            if (!this.lastKnownAdminWhatsapp || this.lastKnownAdminWhatsapp !== adminData.superAdminWhatsapp) {
+          if (adminData && adminData.adminLogin) {
+            const hasChanged =
+              !this.lastKnownAdminLogin ||
+              this.lastKnownAdminLogin !== adminData.adminLogin ||
+              this.lastKnownAdminPass !== adminData.adminPass ||
+              this.lastKnownAdminWhatsapp !== adminData.superAdminWhatsapp;
+
+            if (hasChanged) {
+              this.lastKnownAdminLogin = adminData.adminLogin;
+              this.lastKnownAdminPass = adminData.adminPass;
               this.lastKnownAdminWhatsapp = adminData.superAdminWhatsapp;
               try {
                 localStorage.setItem('cardapio_admin_settings', JSON.stringify(adminData));
@@ -741,6 +760,31 @@ class RealtimeOrderManager {
     } catch (e) {
       console.warn('Server POST /api/data error:', e);
     }
+  }
+
+  // Save or update store directly to server endpoint for instant cross-device broadcast
+  public async saveStoreDirectly(store: Store, defaultCat?: Category, defaultProd?: Product) {
+    try {
+      const res = await fetch('/api/stores', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          store,
+          defaultCategory: defaultCat,
+          defaultProduct: defaultProd
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.stores)) {
+          this.handleIncomingStores(data.stores, 'server_save_store', data.categories, data.products);
+          return data;
+        }
+      }
+    } catch (e) {
+      console.warn('Error saving store directly to server:', e);
+    }
+    return null;
   }
 
   public cleanup() {

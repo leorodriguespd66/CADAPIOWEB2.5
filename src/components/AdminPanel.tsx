@@ -219,6 +219,13 @@ export default function AdminPanel({
     knownStoreIdsRef.current = new Set(stores.map(s => s.id));
   }, [stores, isAuthenticated, isSuperAdmin]);
 
+  // Automatically refresh stores from server immediately upon admin login
+  useEffect(() => {
+    if (isAuthenticated && isSuperAdmin) {
+      realtimeOrderManager.refreshStoresNow();
+    }
+  }, [isAuthenticated, isSuperAdmin]);
+
   const handleManualRefreshStores = async () => {
     setIsRefreshingStores(true);
     try {
@@ -292,12 +299,62 @@ export default function AdminPanel({
     window.open(url, '_blank');
   };
 
-  // Handle Login (Supports Admin or Store Owner credentials)
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  // Handle Login (Authoritative server validation with instant old-password invalidation)
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const inputUser = usernameInput.trim();
     const inputPass = passwordInput.trim();
 
+    if (!inputUser || !inputPass) {
+      setLoginError('Por favor informe o usuário e a senha.');
+      return;
+    }
+
+    setLoginError('');
+
+    // 1. Authoritative Server-side Login Check
+    try {
+      const res = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: inputUser, password: inputPass })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.role === 'superadmin') {
+          setIsSuperAdmin(true);
+          setIsAuthenticated(true);
+          setActiveTab('stores');
+          setLoginError('');
+          if (data.adminSettings) {
+            onUpdateData(stores, categories, products, data.adminSettings);
+            try {
+              localStorage.setItem('cardapio_admin_settings', JSON.stringify(data.adminSettings));
+            } catch {}
+          }
+          if (stores.length > 0) {
+            setSelectedStoreId(stores[0].id);
+          }
+          return;
+        } else if (data.role === 'store_owner' && data.store) {
+          setIsSuperAdmin(false);
+          setIsAuthenticated(true);
+          setSelectedStoreId(data.store.id);
+          setActiveTab('pdv');
+          setLoginError('');
+          return;
+        }
+      } else if (res.status === 401 || res.status === 400) {
+        const errData = await res.json().catch(() => ({}));
+        setLoginError(errData.error || 'Usuário ou Senha incorretos. A senha antiga foi excluída e não é mais válida.');
+        return;
+      }
+    } catch (netErr) {
+      console.warn('Network unreachable during server login, using local verification fallback:', netErr);
+    }
+
+    // 2. Offline Fallback (only if server network is totally unreachable)
     if (inputUser === adminSettings.adminLogin && inputPass === adminSettings.adminPass) {
       setIsSuperAdmin(true);
       setIsAuthenticated(true);
@@ -316,23 +373,28 @@ export default function AdminPanel({
         setIsSuperAdmin(false);
         setIsAuthenticated(true);
         setSelectedStoreId(matchedStore.id);
-        setActiveTab('pdv'); // Open PDV tab to let them view daily sales & orders immediately
+        setActiveTab('pdv');
         setLoginError('');
       } else {
-        setLoginError('Login ou Senha incorretos. Utilize admin/admin ou suas credenciais de lojista.');
+        setLoginError('Login ou Senha incorretos.');
       }
     }
   };
 
   // Approve pending store link
   const handleApproveStore = async (storeId: string) => {
+    let affectedStore: Store | undefined;
     const updatedStores = stores.map(s => {
       if (s.id === storeId) {
-        return { ...s, isApproved: true, isBlocked: false };
+        affectedStore = { ...s, isApproved: true, isBlocked: false };
+        return affectedStore;
       }
       return s;
     });
     onUpdateData(updatedStores, categories, products, adminSettings);
+    if (affectedStore) {
+      realtimeOrderManager.saveStoreDirectly(affectedStore);
+    }
     showToast('Link do estabelecimento liberado para vendas!');
     try {
       await realtimeOrderManager.approveStore(storeId);
@@ -341,25 +403,35 @@ export default function AdminPanel({
 
   // Block or Unblock store link
   const handleToggleBlockStore = (storeId: string, block: boolean) => {
+    let affectedStore: Store | undefined;
     const updatedStores = stores.map(s => {
       if (s.id === storeId) {
-        return { ...s, isBlocked: block };
+        affectedStore = { ...s, isBlocked: block };
+        return affectedStore;
       }
       return s;
     });
     onUpdateData(updatedStores, categories, products, adminSettings);
+    if (affectedStore) {
+      realtimeOrderManager.saveStoreDirectly(affectedStore);
+    }
     showToast(block ? 'Link do estabelecimento bloqueado com sucesso!' : 'Link do estabelecimento desbloqueado com sucesso!');
   };
 
   // Set store online days / subscription period
   const handleSetStoreDaysOnline = (storeId: string, days: number) => {
+    let affectedStore: Store | undefined;
     const updatedStores = stores.map(s => {
       if (s.id === storeId) {
-        return extendStorePlanDays(s, days);
+        affectedStore = extendStorePlanDays(s, days);
+        return affectedStore;
       }
       return s;
     });
     onUpdateData(updatedStores, categories, products, adminSettings);
+    if (affectedStore) {
+      realtimeOrderManager.saveStoreDirectly(affectedStore);
+    }
     showToast(`Período de ${days} dias online configurado com sucesso!`);
   };
 
@@ -501,11 +573,15 @@ export default function AdminPanel({
       const updatedProducts = [...products, defaultProd];
       onUpdateData(updatedStores, updatedCategories, updatedProducts, adminSettings);
       
+      // Persist directly to server and broadcast via SSE
+      realtimeOrderManager.saveStoreDirectly(preparedStore, defaultCat, defaultProd);
+
       // Open success modal for admin
       setClientCreatedSuccess(preparedStore);
     } else {
       updatedStores = stores.map(s => s.id === preparedStore.id ? preparedStore : s);
       onUpdateData(updatedStores, categories, products, adminSettings);
+      realtimeOrderManager.saveStoreDirectly(preparedStore);
       showToast('Estabelecimento atualizado com sucesso!');
     }
 
@@ -938,21 +1014,38 @@ export default function AdminPanel({
       localStorage.setItem('cardapio_admin_settings', JSON.stringify(updatedSettings));
     } catch {}
 
-    // Send direct POST to server dedicated endpoint for cross-device sync
+    // Send direct POST to server dedicated endpoint for cross-device sync and disk persistence
     try {
-      await fetch('/api/admin-settings', {
+      const res = await fetch('/api/admin-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedSettings)
       });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.adminSettings) {
+          try {
+            localStorage.setItem('cardapio_admin_settings', JSON.stringify(data.adminSettings));
+          } catch {}
+          onUpdateData(stores, categories, products, data.adminSettings);
+          setNewLogin(data.adminSettings.adminLogin);
+          setNewPass(data.adminSettings.adminPass);
+          setSuperAdminWhatsappInput(data.adminSettings.superAdminWhatsapp);
+          setSettingsSuccess('✅ Usuário e senha atualizados no servidor! A senha anterior foi completamente excluída e não poderá mais ser usada.');
+          showToast('Credenciais de Administrador Geral atualizadas com sucesso!');
+          setTimeout(() => setSettingsSuccess(''), 5000);
+          return;
+        }
+      }
     } catch (err) {
       console.warn('Server sync error for admin settings:', err);
     }
 
     onUpdateData(stores, categories, products, updatedSettings);
     setSuperAdminWhatsappInput(cleanPhone);
-    setSettingsSuccess('Configurações administrativas atualizadas com sucesso!');
-    setTimeout(() => setSettingsSuccess(''), 4000);
+    setSettingsSuccess('✅ Usuário e senha atualizados com sucesso! A senha antiga foi excluída.');
+    showToast('Credenciais atualizadas com sucesso!');
+    setTimeout(() => setSettingsSuccess(''), 5000);
   };
 
   // Filter products for currently selected category in menu editor

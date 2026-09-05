@@ -104,7 +104,7 @@ export default function App() {
           if (Array.isArray(serverData.motoboys) && serverData.motoboys.length > 0) {
             setMotoboys(serverData.motoboys);
           }
-          if (serverData.adminSettings && serverData.adminSettings.superAdminWhatsapp) {
+          if (serverData.adminSettings && serverData.adminSettings.adminLogin) {
             setAdminSettings(serverData.adminSettings);
             try {
               localStorage.setItem('cardapio_admin_settings', JSON.stringify(serverData.adminSettings));
@@ -115,6 +115,34 @@ export default function App() {
       .catch(() => {
         // Dev server or offline fallback handled seamlessly
       });
+
+    // Ensure freshest admin credentials and stores from authoritative endpoints
+    fetch(`/api/admin-settings?_t=${Date.now()}`, { cache: 'no-store' })
+      .then(res => res.json())
+      .then(adminData => {
+        if (adminData && adminData.adminLogin) {
+          setAdminSettings(adminData);
+          try {
+            localStorage.setItem('cardapio_admin_settings', JSON.stringify(adminData));
+          } catch {}
+        }
+      })
+      .catch(() => {});
+
+    fetch(`/api/stores?_t=${Date.now()}`, { cache: 'no-store' })
+      .then(res => res.json())
+      .then(storeData => {
+        if (storeData && Array.isArray(storeData.stores)) {
+          setStores(storeData.stores);
+          realtimeOrderManager.setInitialStores(storeData.stores);
+          try {
+            localStorage.setItem('cardapio_stores', JSON.stringify(storeData.stores));
+          } catch {}
+          if (Array.isArray(storeData.categories)) setCategories(storeData.categories);
+          if (Array.isArray(storeData.products)) setProducts(storeData.products);
+        }
+      })
+      .catch(() => {});
 
     // Initial Routing Parse
     const parseUrlRoute = () => {

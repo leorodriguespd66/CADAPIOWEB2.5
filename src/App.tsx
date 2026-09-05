@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, AlertTriangle, ShieldAlert, MessageCircle } from 'lucide-react';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 import { getLocalStorageData, saveLocalStorageData } from './initialData';
 import { Store, Category, Product, AdminSettings, Order, CashTransaction, Motoboy } from './types';
 import LandingPage from './components/LandingPage';
@@ -222,6 +223,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 relative" id="cardapio-web-app">
+      <SpeedInsights />
       {currentView === 'landing' && (
         <LandingPage
           stores={stores}

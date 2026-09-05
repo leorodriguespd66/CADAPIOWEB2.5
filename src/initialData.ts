@@ -11,7 +11,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: StoreNotificationSettings = {
 export const DEFAULT_ADMIN_SETTINGS: AdminSettings = {
   adminLogin: 'admin',
   adminPass: 'admin',
-  superAdminWhatsapp: '5511999999999'
+  superAdminWhatsapp: '5594992944888'
 };
 
 export const INITIAL_STORES: Store[] = [

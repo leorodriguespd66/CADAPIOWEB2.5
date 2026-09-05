@@ -249,6 +249,13 @@ export default function PDVPanel({
   const handleCompleteOrder = (order: Order) => {
     const updated = orders.map(o => o.id === order.id ? { ...o, status: 'completed' as OrderStatus } : o);
     onUpdateOrders(updated);
+
+    const storeMenuUrl = `${window.location.origin}${window.location.pathname}?store=${store.slug}&pedido=${encodeURIComponent(order.code)}#${store.slug}`;
+    const defaultCompleteMsg = `✅ Olá, {cliente}! Seu pedido {codigo} foi entregue com sucesso! Bom apetite! 🍕\n\nPor favor, deixe sua avaliação e nota para o ${store.name} clicando no link abaixo:\n${storeMenuUrl}`;
+    const template = notificationSettings.completedMessage || defaultCompleteMsg;
+    const msg = formatNotificationText(template, order);
+    setCustomNotifyMsg(msg);
+    setNotifyingOrder({ order, action: 'completed' });
   };
 
   const handleSendNotificationWhatsApp = (phone: string, text: string) => {

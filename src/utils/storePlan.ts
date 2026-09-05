@@ -173,10 +173,32 @@ export function formatExpirationDate(isoDate?: string): string {
 }
 
 /**
+ * Formats a phone number for display, e.g. (94) 99294-4888
+ */
+export function formatPhoneNumber(phone: string = ''): string {
+  const digits = phone.replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('55') && digits.length >= 12) {
+    const ddd = digits.slice(2, 4);
+    const rest = digits.slice(4);
+    if (rest.length === 9) {
+      return `(${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`;
+    } else if (rest.length === 8) {
+      return `(${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`;
+    }
+  } else if (digits.length === 11) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+  } else if (digits.length === 10) {
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  }
+  return phone;
+}
+
+/**
  * Generates direct WhatsApp link to the Super Administrator
  */
-export function getAdminWhatsAppLink(phone: string = '5511999999999', message: string = ''): string {
-  const cleanPhone = phone.replace(/\D/g, '') || '5511999999999';
+export function getAdminWhatsAppLink(phone: string = '5594992944888', message: string = ''): string {
+  const cleanPhone = phone.replace(/\D/g, '') || '5594992944888';
   const defaultMsg = message || 'Olá! Gostaria de falar com o Administrador do Cardápio Web.';
   return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(defaultMsg)}`;
 }

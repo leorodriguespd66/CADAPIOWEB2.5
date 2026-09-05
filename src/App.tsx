@@ -7,6 +7,7 @@ import MenuPage from './components/MenuPage';
 import AdminPanel from './components/AdminPanel';
 import { realtimeOrderManager, requestNotificationPermission } from './utils/realtimeSync';
 import { getStoreBlockStatus, getAdminWhatsAppLink } from './utils/storePlan';
+import { calculateStoreRating } from './utils/rating';
 
 type ViewRoute = 'landing' | 'store' | 'admin';
 
@@ -80,6 +81,10 @@ export default function App() {
           }
           if (Array.isArray(serverData.motoboys) && serverData.motoboys.length > 0) {
             setMotoboys(serverData.motoboys);
+          }
+          if (serverData.adminSettings && serverData.adminSettings.superAdminWhatsapp) {
+            setAdminSettings(serverData.adminSettings);
+            localStorage.setItem('cardapio_admin_settings', JSON.stringify(serverData.adminSettings));
           }
         }
       })
@@ -186,6 +191,20 @@ export default function App() {
     });
   };
 
+  const handleRateStore = (storeId: string, updatedOrders: Order[]) => {
+    handleUpdateOrders(updatedOrders);
+    const targetStore = stores.find(s => s.id === storeId);
+    if (targetStore) {
+      const calc = calculateStoreRating(targetStore, updatedOrders);
+      const updatedStores = stores.map(s => s.id === storeId ? {
+        ...s,
+        rating: calc.rating,
+        ratingCount: calc.count
+      } : s);
+      handleUpdateData(updatedStores, categories, products, adminSettings);
+    }
+  };
+
   // Safe navigation helpers (updates route states + URL hash)
   const navigateToLanding = () => {
     window.location.hash = '';
@@ -243,6 +262,8 @@ export default function App() {
             orders={orders}
             onBackToLanding={navigateToLanding}
             onPlaceOrder={handlePlaceOrder}
+            onUpdateOrders={handleUpdateOrders}
+            onRateStore={handleRateStore}
           />
         ) : storeBlockStatus.reason === 'expired' ? (
           <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-6 text-center animate-fadeIn" id="store-expired-screen">

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fb923c"/>
+      <stop offset="100%" stop-color="#ea580c"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="110" fill="url(#grad)"/>
+  <g filter="url(#shadow)" fill="#ffffff" transform="translate(106, 106) scale(0.586)">
+    <!-- Fork -->
+    <path d="M120 40 C120 40, 120 160, 120 180 C120 220, 150 250, 190 250 L190 440 C190 460, 210 470, 225 470 C240 470, 260 460, 260 440 L260 250 C300 250, 330 220, 330 180 L330 40 L290 40 L290 150 L260 150 L260 40 L240 40 L240 150 L210 150 L210 40 Z"/>
+    <!-- Knife -->
+    <path d="M370 40 C370 40, 420 80, 420 200 C420 240, 390 260, 370 260 L370 440 C370 460, 350 470, 335 470 C320 470, 300 460, 300 440 L300 40 Z" transform="translate(60, 0)"/>
+  </g>
+  <!-- Decorative Plate Circle -->
+  <circle cx="256" cy="256" r="190" fill="none" stroke="#ffffff" stroke-width="16" opacity="0.4" stroke-dasharray="24 16"/>
+</svg>

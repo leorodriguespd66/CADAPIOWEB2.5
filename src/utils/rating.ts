@@ -16,22 +16,29 @@ export function calculateStoreRating(store: Store, orders: Order[] = []): Calcul
     o => o.storeId === store.id && typeof o.storeRating === 'number' && o.storeRating > 0
   );
 
-  let finalRating = store.rating ?? 0;
-  let finalCount = store.ratingCount ?? 0;
+  let finalRating = 0;
+  let finalCount = 0;
 
   if (ratedOrders.length > 0) {
     const sum = ratedOrders.reduce((acc, o) => acc + (o.storeRating || 0), 0);
     const count = ratedOrders.length;
-    // Média real calculada a partir das avaliações dos clientes
+    // Média real calculada a partir das avaliações reais dos clientes
     const avg = sum / count;
     finalRating = Math.round(avg * 10) / 10;
     finalCount = count;
+  } else if (typeof store.rating === 'number' && store.rating > 0) {
+    finalRating = store.rating;
+    finalCount = store.ratingCount ?? 1;
   }
+
+  // Regra expressa do usuário:
+  // Só pode mostrar a nota quando o estabelecimento tiver pontuação de 3.0 para cima
+  const displayable = finalRating >= 3.0 && finalCount > 0;
 
   return {
     rating: finalRating,
     count: finalCount,
-    displayable: finalRating >= 3.0,
+    displayable,
     formatted: finalRating.toFixed(1)
   };
 }

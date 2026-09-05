@@ -9,6 +9,7 @@ import { Store, Order, AdminSettings, Product } from '../types';
 import { isStorePlanExpired, getAdminWhatsAppLink } from '../utils/storePlan';
 import { getStoreHoursStatus } from '../utils/storeHours';
 import { calculateStoreRating } from '../utils/rating';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface LandingPageProps {
   stores: Store[];
@@ -205,6 +206,7 @@ export default function LandingPage({
           </div>
           
           <div className="flex items-center space-x-2">
+            <PWAInstallButton variant="navbar" />
             <a
               href={getAdminWhatsAppLink(adminSettings?.superAdminWhatsapp, 'Olá! Gostaria de falar com o Administrador Geral.')}
               target="_blank"
@@ -213,7 +215,7 @@ export default function LandingPage({
               title="Falar com o Administrador Geral no WhatsApp"
             >
               <MessageCircle size={14} />
-              <span className="hidden sm:inline">WhatsApp Adm</span>
+              <span>WhatsApp Adm</span>
             </a>
             <button
               onClick={() => setIsRegisterModalOpen(true)}
@@ -295,8 +297,9 @@ export default function LandingPage({
                 className="w-full sm:w-auto px-7 py-3.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold rounded-xl shadow-lg shadow-emerald-600/20 text-xs sm:text-sm text-center transition cursor-pointer flex items-center justify-center gap-2"
               >
                 <MessageCircle size={18} />
-                <span>WhatsApp do Administrador</span>
+                <span>Falar com o Administrador</span>
               </a>
+              <PWAInstallButton variant="hero" />
             </motion.div>
           </div>
         </div>

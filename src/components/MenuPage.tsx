@@ -4,7 +4,7 @@ import {
   Search, ShoppingBag, Plus, Minus, X, MapPin, Clock, Phone, 
   Bike, Check, ArrowLeft, AlertCircle, Trash2, ShieldCheck, Clipboard,
   Star, Flame, Navigation, ExternalLink, Radio, Sparkles, Instagram,
-  BellRing, CheckCircle2, XCircle, Truck, ChefHat
+  BellRing, CheckCircle2, XCircle, Truck, ChefHat, MessageSquare
 } from 'lucide-react';
 import { Store, Category, Product, CartItem, OrderDetails, OptionChoice, Order, OrderItem } from '../types';
 import { 
@@ -17,6 +17,7 @@ import { getStoreHoursStatus } from '../utils/storeHours';
 import { calculateStoreRating } from '../utils/rating';
 import { notificationAudio } from '../utils/notificationAudio';
 import LiveOrderTrackingModal from './LiveOrderTrackingModal';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface MenuPageProps {
   store: Store;
@@ -26,9 +27,19 @@ interface MenuPageProps {
   onBackToLanding: () => void;
   onPlaceOrder?: (newOrder: Order) => void;
   onUpdateOrders?: (orders: Order[]) => void;
+  onRateStore?: (storeId: string, updatedOrders: Order[]) => void;
 }
 
-export default function MenuPage({ store, categories, products, orders = [], onBackToLanding, onPlaceOrder, onUpdateOrders }: MenuPageProps) {
+export default function MenuPage({
+  store,
+  categories,
+  products,
+  orders = [],
+  onBackToLanding,
+  onPlaceOrder,
+  onUpdateOrders,
+  onRateStore
+}: MenuPageProps) {
   // States
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -61,9 +72,23 @@ export default function MenuPage({ store, categories, products, orders = [], onB
     }
   };
 
-  // Placed Order Code & ID with localStorage memory (ONLY if created today)
+  // Placed Order Code & ID with localStorage memory AND URL parameter detection
   const [placedOrderId, setPlacedOrderId] = useState<string | null>(() => {
     try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlParam = urlParams.get('pedido') || urlParams.get('order');
+      if (urlParam) {
+        const clean = urlParam.trim();
+        const raw = localStorage.getItem('cardapio_orders');
+        if (raw) {
+          const list: Order[] = JSON.parse(raw);
+          const found = list.find(o => (o.id === clean || o.code === clean || o.code.replace('#', '') === clean.replace('#', '')) && o.storeId === store.id);
+          if (found && isOrderFromToday(found)) {
+            return found.id;
+          }
+        }
+      }
+
       const raw = localStorage.getItem('cardapio_orders');
       const savedId = localStorage.getItem(`active_order_id_${store.id}`);
       if (raw && savedId) {
@@ -84,6 +109,13 @@ export default function MenuPage({ store, categories, products, orders = [], onB
 
   const [placedOrderCode, setPlacedOrderCode] = useState<string | null>(() => {
     try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlParam = urlParams.get('pedido') || urlParams.get('order');
+      if (urlParam) {
+        const clean = urlParam.trim();
+        return clean.startsWith('#') ? clean : `#${clean}`;
+      }
+
       const raw = localStorage.getItem('cardapio_orders');
       const savedCode = localStorage.getItem(`active_order_code_${store.id}`);
       if (raw && savedCode) {
@@ -99,6 +131,9 @@ export default function MenuPage({ store, categories, products, orders = [], onB
     }
   });
 
+  // Calculate store rating dynamically based on all customer ratings
+  const storeRatingInfo = useMemo(() => calculateStoreRating(store, orders), [store, orders]);
+
   // Find real-time placed order in orders list across all connected devices (ONLY if from today)
   const currentPlacedOrder = useMemo(() => {
     if (!orders || orders.length === 0) return null;
@@ -107,7 +142,8 @@ export default function MenuPage({ store, categories, products, orders = [], onB
       found = orders.find(o => o.id === placedOrderId);
     }
     if (!found && placedOrderCode) {
-      found = orders.find(o => o.code === placedOrderCode);
+      const cleanSearch = placedOrderCode.replace('#', '').trim();
+      found = orders.find(o => o.code === placedOrderCode || o.code.replace('#', '').trim() === cleanSearch);
     }
     if (found && isOrderFromToday(found)) {
       return found;
@@ -346,22 +382,34 @@ export default function MenuPage({ store, categories, products, orders = [], onB
       ratedAt: new Date().toISOString()
     } : null);
 
-    try {
-      const raw = localStorage.getItem('cardapio_orders');
-      if (raw) {
-        const list: Order[] = JSON.parse(raw);
-        const updated = list.map(o => o.id === orderId ? {
-          ...o,
-          storeRating,
-          orderRating,
-          ratingFeedback: feedback,
-          ratedAt: new Date().toISOString()
-        } : o);
-        localStorage.setItem('cardapio_orders', JSON.stringify(updated));
-        window.dispatchEvent(new Event('order_updated'));
+    const baseList = orders.length > 0 ? orders : (() => {
+      try {
+        const raw = localStorage.getItem('cardapio_orders');
+        return raw ? JSON.parse(raw) : [];
+      } catch {
+        return [];
       }
+    })();
+
+    const updated = baseList.map((o: Order) => o.id === orderId ? {
+      ...o,
+      storeRating,
+      orderRating,
+      ratingFeedback: feedback,
+      ratedAt: new Date().toISOString()
+    } : o);
+
+    try {
+      localStorage.setItem('cardapio_orders', JSON.stringify(updated));
+      window.dispatchEvent(new Event('order_updated'));
     } catch (e) {
       console.error(e);
+    }
+
+    if (onRateStore) {
+      onRateStore(store.id, updated);
+    } else if (onUpdateOrders) {
+      onUpdateOrders(updated);
     }
   };
 
@@ -760,6 +808,68 @@ export default function MenuPage({ store, categories, products, orders = [], onB
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans pb-24 relative" id={`menu-store-${store.slug}`}>
+      {/* Floating Status Notification Toast (Audio + Visual Alert) */}
+      <AnimatePresence>
+        {statusToast && (
+          <motion.div
+            initial={{ opacity: 0, y: -60, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -30, scale: 0.95 }}
+            className="fixed top-4 left-4 right-4 sm:left-auto sm:right-6 sm:max-w-md z-50 pointer-events-auto"
+            id="realtime-status-toast"
+          >
+            <div className={`p-4 rounded-2xl shadow-2xl border flex items-start gap-3.5 text-white ${
+              statusToast.type === 'accepted'
+                ? 'bg-emerald-600 border-emerald-400'
+                : statusToast.type === 'delivering'
+                ? 'bg-blue-600 border-blue-400'
+                : statusToast.type === 'cancelled'
+                ? 'bg-rose-600 border-rose-400'
+                : 'bg-gradient-to-r from-amber-500 to-orange-500 border-amber-300 text-white'
+            }`}>
+              <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+                {statusToast.type === 'accepted' && <ChefHat size={22} />}
+                {statusToast.type === 'delivering' && <Bike size={22} />}
+                {statusToast.type === 'cancelled' && <XCircle size={22} />}
+                {statusToast.type === 'completed' && <Star size={22} className="fill-white" />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <h5 className="font-extrabold text-sm sm:text-base leading-tight">
+                    {statusToast.title}
+                  </h5>
+                  <button
+                    onClick={() => setStatusToast(null)}
+                    className="w-6 h-6 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition cursor-pointer text-xs"
+                    title="Fechar aviso"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <p className="text-xs text-white/95 mt-1 leading-snug">
+                  {statusToast.message}
+                </p>
+                {statusToast.type === 'completed' && (
+                  <button
+                    onClick={() => {
+                      if (currentPlacedOrder) {
+                        setActiveTrackingOrder(currentPlacedOrder);
+                        setIsLiveTrackingOpen(true);
+                      }
+                      setStatusToast(null);
+                    }}
+                    className="mt-2.5 px-3.5 py-1.5 rounded-lg bg-white text-slate-900 font-extrabold text-xs shadow-xs hover:bg-amber-50 transition cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Star size={13} className="fill-amber-500 text-amber-500" />
+                    <span>Avaliar Restaurante Agora</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Cover Image Banner */}
       <div className="h-48 sm:h-64 bg-slate-200 relative">
         <img
@@ -775,6 +885,10 @@ export default function MenuPage({ store, categories, products, orders = [], onB
         >
           <ArrowLeft size={18} />
         </button>
+
+        <div className="absolute top-4 right-4 flex items-center gap-2">
+          <PWAInstallButton variant="navbar" />
+        </div>
       </div>
 
       {/* Store Header Info */}
@@ -796,6 +910,16 @@ export default function MenuPage({ store, categories, products, orders = [], onB
                 <span className={`w-2 h-2 rounded-full ${storeHours.dotClass}`} />
                 <span>{storeHours.isOpen ? 'Online • Aberto Agora' : 'Fechado no momento'}</span>
               </span>
+              {storeRatingInfo.displayable ? (
+                <div className="inline-flex items-center gap-1 bg-amber-50 text-amber-900 border border-amber-200 px-2.5 py-0.5 rounded-full text-xs font-black shadow-2xs" title={`Nota Média: ${storeRatingInfo.formatted} baseada em ${storeRatingInfo.count} avaliações`}>
+                  <Star size={12} className="fill-amber-400 text-amber-500" />
+                  <span>{storeRatingInfo.formatted} ({storeRatingInfo.count})</span>
+                </div>
+              ) : (
+                <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-500 px-2.5 py-0.5 rounded-full text-xs font-bold">
+                  Novo
+                </span>
+              )}
               <span className="text-[11px] text-slate-500 font-medium">
                 ({storeHours.nextEventText})
               </span>
@@ -891,34 +1015,58 @@ export default function MenuPage({ store, categories, products, orders = [], onB
         </div>
       )}
 
-      {/* Clean Order Rating Banner (ONLY for today's order, without fake tracking steps) */}
-      {placedOrderCode && currentPlacedOrder && !currentPlacedOrder.storeRating && (
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 mt-4">
-          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-amber-950 shadow-xs">
-            <div className="flex items-center gap-3 text-center sm:text-left">
-              <div className="w-10 h-10 rounded-full bg-amber-400 text-amber-950 flex items-center justify-center font-bold text-sm shrink-0 shadow-xs">
-                <Star size={20} className="fill-amber-950 text-amber-950" />
+      {/* Real-time Order Live Notification & Status Card (Synchronized across all devices) */}
+      {placedOrderCode && currentPlacedOrder && (
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 mt-4" id="live-order-status-card">
+          <div className={`rounded-2xl p-5 border shadow-sm transition-all ${
+            currentPlacedOrder.status === 'pending'
+              ? 'bg-amber-50/90 border-amber-300 text-amber-950'
+              : currentPlacedOrder.status === 'preparing'
+              ? 'bg-emerald-50/90 border-emerald-300 text-emerald-950'
+              : currentPlacedOrder.status === 'delivering'
+              ? 'bg-blue-50/90 border-blue-300 text-blue-950'
+              : currentPlacedOrder.status === 'cancelled'
+              ? 'bg-rose-50/90 border-rose-300 text-rose-950'
+              : 'bg-gradient-to-r from-amber-50 to-orange-50 border-amber-300 text-amber-950'
+          }`}>
+            {/* Top Bar: Badge, Code and Dismiss button */}
+            <div className="flex items-center justify-between gap-3 pb-3.5 border-b border-slate-900/10">
+              <div className="flex items-center gap-2 flex-wrap">
+                {currentPlacedOrder.status === 'pending' && (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-amber-500 text-white shadow-xs animate-pulse">
+                    <Clock size={13} className="animate-spin" />
+                    <span>AGUARDANDO ACEITE DA LOJA</span>
+                  </span>
+                )}
+                {currentPlacedOrder.status === 'preparing' && (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-emerald-600 text-white shadow-xs">
+                    <ChefHat size={14} />
+                    <span>PEDIDO ACEITO • COZINHA PREPARANDO</span>
+                  </span>
+                )}
+                {currentPlacedOrder.status === 'delivering' && (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-blue-600 text-white shadow-xs animate-pulse">
+                    <Bike size={14} />
+                    <span>SAIU PARA ENTREGA • A CAMINHO</span>
+                  </span>
+                )}
+                {currentPlacedOrder.status === 'cancelled' && (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-rose-600 text-white shadow-xs">
+                    <XCircle size={14} />
+                    <span>PEDIDO RECUSADO PELA LOJA</span>
+                  </span>
+                )}
+                {currentPlacedOrder.status === 'completed' && (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-emerald-600 text-white shadow-xs">
+                    <CheckCircle2 size={14} />
+                    <span>PEDIDO ENTREGUE COM SUCESSO</span>
+                  </span>
+                )}
+                <span className="text-xs font-mono font-extrabold px-2.5 py-1 rounded-lg bg-white/80 border border-slate-900/10 text-slate-800">
+                  {currentPlacedOrder.code}
+                </span>
               </div>
-              <div>
-                <p className="text-xs font-black text-amber-950">
-                  Como foi sua experiência com seu pedido recente {placedOrderCode}?
-                </p>
-                <p className="text-[11px] text-amber-800 mt-0.5">
-                  Sua avaliação rápida leva 10 segundos e ajuda a loja a melhorar sempre.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => {
-                  setActiveTrackingOrder(currentPlacedOrder);
-                  setIsLiveTrackingOpen(true);
-                }}
-                className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-amber-950 text-xs font-bold rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5 transition active:scale-95"
-              >
-                <Star size={13} className="fill-amber-950 text-amber-950" />
-                <span>Avaliar Pedido</span>
-              </button>
+
               <button
                 onClick={() => {
                   setPlacedOrderCode(null);
@@ -928,11 +1076,119 @@ export default function MenuPage({ store, categories, products, orders = [], onB
                     localStorage.removeItem(`active_order_code_${store.id}`);
                   } catch {}
                 }}
-                className="text-amber-800 hover:text-amber-950 text-xs font-bold px-2 py-1 cursor-pointer transition"
-                title="Fechar e dispensar"
+                className="text-xs font-bold text-slate-500 hover:text-slate-800 px-2 py-1 rounded-lg hover:bg-black/5 transition cursor-pointer"
+                title="Fechar e dispensar aviso"
               >
-                ✕ Fechar
+                ✕ Ocultar
               </button>
+            </div>
+
+            {/* Notification Text Body */}
+            <div className="pt-3.5 space-y-2.5">
+              <h4 className="font-extrabold text-base sm:text-lg tracking-tight flex items-center gap-2">
+                {currentPlacedOrder.status === 'pending' && '⏳ Pedido enviado! Aguardando o restaurante confirmar...'}
+                {currentPlacedOrder.status === 'preparing' && '🎉 Pedido Aceito! A cozinha já começou a preparar seu pedido!'}
+                {currentPlacedOrder.status === 'delivering' && '🛵 Saiu para Entrega! Seu pedido está a caminho!'}
+                {currentPlacedOrder.status === 'cancelled' && '❌ Pedido recusado pelo estabelecimento'}
+                {currentPlacedOrder.status === 'completed' && '✅ Pedido Entregue! Por favor, avalie sua experiência:'}
+              </h4>
+
+              <p className="text-xs sm:text-sm leading-relaxed opacity-95">
+                {currentPlacedOrder.status === 'pending' && (
+                  <>
+                    Seu pedido foi transmitido para a loja <strong>{store.name}</strong>. Assim que o restaurante aceitar ou recusar, você ouvirá o alerta sonoro e a mensagem em texto aqui na tela atualizará automaticamente em qualquer dispositivo.
+                  </>
+                )}
+                {currentPlacedOrder.status === 'preparing' && (
+                  <>
+                    O estabelecimento aceitou seu pedido e a cozinha já começou o preparo com muito carinho! Assim que sair para entrega com o motoboy, notificaremos você imediatamente.
+                  </>
+                )}
+                {currentPlacedOrder.status === 'delivering' && (
+                  <>
+                    Seu pedido acabou de sair para entrega! {currentPlacedOrder.driverName ? `Entregador(a): ${currentPlacedOrder.driverName}. ` : ''}Destino: <strong>{currentPlacedOrder.address}</strong>. Fique atento à campainha ou portão!
+                  </>
+                )}
+                {currentPlacedOrder.status === 'cancelled' && (
+                  <>
+                    Infelizmente o pedido não pôde ser aceito pelo restaurante. <strong>Motivo informado:</strong> "{currentPlacedOrder.cancellationReason || 'Itens indisponíveis ou loja ocupada no momento'}". Você pode falar com o restaurante pelo WhatsApp clicando no botão abaixo.
+                  </>
+                )}
+                {currentPlacedOrder.status === 'completed' && (
+                  <>
+                    Seu pedido foi finalizado e entregue com sucesso. Sua avaliação é muito importante para que o estabelecimento <strong>{store.name}</strong> continue subindo de nota e aprimorando o cardápio!
+                  </>
+                )}
+              </p>
+
+              {/* 4-Step Visual Tracker */}
+              {currentPlacedOrder.status !== 'cancelled' && (
+                <div className="pt-2 pb-1">
+                  <div className="grid grid-cols-4 gap-1.5 sm:gap-2 text-center text-[10px] sm:text-xs font-bold">
+                    <div className={`p-2 rounded-xl transition ${
+                      ['pending', 'preparing', 'delivering', 'completed'].includes(currentPlacedOrder.status)
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-white/70 text-slate-400'
+                    }`}>
+                      1. Enviado
+                    </div>
+                    <div className={`p-2 rounded-xl transition ${
+                      ['preparing', 'delivering', 'completed'].includes(currentPlacedOrder.status)
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-white/70 text-slate-400'
+                    }`}>
+                      2. Na Cozinha
+                    </div>
+                    <div className={`p-2 rounded-xl transition ${
+                      ['delivering', 'completed'].includes(currentPlacedOrder.status)
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-white/70 text-slate-400'
+                    }`}>
+                      3. A Caminho
+                    </div>
+                    <div className={`p-2 rounded-xl transition ${
+                      currentPlacedOrder.status === 'completed'
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-white/70 text-slate-400'
+                    }`}>
+                      4. Entregue
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons: Rate, WhatsApp */}
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                {currentPlacedOrder.status === 'completed' && (
+                  <button
+                    onClick={() => {
+                      setActiveTrackingOrder(currentPlacedOrder);
+                      setIsLiveTrackingOpen(true);
+                    }}
+                    className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs rounded-xl shadow-md transition cursor-pointer flex items-center gap-1.5 active:scale-95"
+                  >
+                    <Star size={15} className="fill-slate-950 text-slate-950" />
+                    <span>{currentPlacedOrder.storeRating ? 'Ver/Editar Minha Avaliação' : '⭐ Dê a Nota do Estabelecimento Agora'}</span>
+                  </button>
+                )}
+
+                <a
+                  href={`https://api.whatsapp.com/send?phone=${store.phone.replace(/\D/g, '')}&text=${encodeURIComponent(`Olá! Gostaria de falar sobre meu pedido ${currentPlacedOrder.code} no ${store.name}.`)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <MessageSquare size={13} />
+                  <span>WhatsApp do Restaurante</span>
+                </a>
+
+                {currentPlacedOrder.storeRating && (
+                  <span className="text-xs font-bold text-amber-800 bg-amber-100/90 px-3 py-1.5 rounded-xl flex items-center gap-1">
+                    <Star size={13} className="fill-amber-500 text-amber-500" />
+                    <span>Avaliado com {currentPlacedOrder.storeRating}.0 estrelas!</span>
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         </div>

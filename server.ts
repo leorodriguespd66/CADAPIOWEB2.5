@@ -218,27 +218,48 @@ app.post("/api/stores/register", (req, res) => {
     }
   } catch (e) {}
 
-  const cleanSlug = newStore.slug.toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+  // Sanitize slug or generate from name
+  let cleanSlug = (newStore.slug || newStore.name || '')
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
   if (!cleanSlug) {
-    return res.status(400).json({ error: "Endereço da web (slug) inválido." });
+    cleanSlug = `loja-${Date.now().toString().slice(-4)}`;
   }
 
-  // Check if slug or ownerLogin is taken by ANOTHER store
-  const duplicate = appData.stores.some(s => 
-    s.id !== newStore.id && (
-      (s.slug && s.slug.toLowerCase() === cleanSlug) ||
-      (newStore.ownerLogin && s.ownerLogin && s.ownerLogin.toLowerCase() === newStore.ownerLogin.toLowerCase())
-    )
-  );
-  if (duplicate) {
-    return res.status(409).json({ error: "Esse endereço da web ou usuário de login já está em uso." });
+  // Auto-resolve slug collision by appending number if already taken
+  let finalSlug = cleanSlug;
+  let slugIndex = 2;
+  while (appData.stores.some(s => s.id !== newStore.id && s.slug && s.slug.toLowerCase() === finalSlug.toLowerCase())) {
+    finalSlug = `${cleanSlug}-${slugIndex}`;
+    slugIndex++;
+  }
+
+  // Auto-resolve ownerLogin collision
+  let rawLogin = (newStore.ownerLogin || finalSlug.replace(/-/g, ''))
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]/g, '');
+  if (!rawLogin) rawLogin = `user${Date.now().toString().slice(-4)}`;
+
+  let finalLogin = rawLogin;
+  let loginIndex = 2;
+  while (appData.stores.some(s => s.id !== newStore.id && s.ownerLogin && s.ownerLogin.toLowerCase() === finalLogin.toLowerCase())) {
+    finalLogin = `${rawLogin}${loginIndex}`;
+    loginIndex++;
   }
 
   const cleanPhone = (newStore.phone || '').replace(/\D/g, '');
   const registeredStore = {
     ...newStore,
     id: newStore.id || `store-${Date.now()}`,
-    slug: cleanSlug,
+    slug: finalSlug,
+    ownerLogin: finalLogin,
     phone: cleanPhone,
     isActive: true,
     isApproved: false, // Inicia como Pendente para o Administrador Geral liberar

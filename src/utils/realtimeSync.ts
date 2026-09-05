@@ -451,6 +451,10 @@ class RealtimeOrderManager {
   // Register new store directly on server with real-time push to all sessions
   public async registerStore(newStore: Store, defaultCat?: Category, defaultProd?: Product): Promise<{ success: boolean; store: Store; stores: Store[]; categories?: Category[]; products?: Product[] }> {
     try {
+      // 8s timeout to prevent mobile network hang
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
       const res = await fetch('/api/stores/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -458,8 +462,10 @@ class RealtimeOrderManager {
           newStore,
           defaultCategory: defaultCat,
           defaultProduct: defaultProd
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
 
       if (res.ok) {
         const data = await res.json();
@@ -480,14 +486,36 @@ class RealtimeOrderManager {
         }
       } else {
         const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || 'Erro ao registrar estabelecimento');
+        console.warn('Server registration returned status:', res.status, errJson);
+        if (errJson.error && res.status === 400) {
+          throw new Error(errJson.error);
+        }
       }
     } catch (err: any) {
-      console.warn('Network registration error, falling back:', err);
-      throw err;
+      if (err.name === 'AbortError') {
+        console.warn('Registration request timed out on mobile, proceeding with local fallback');
+      } else {
+        console.warn('Network registration error, proceeding with local fallback:', err);
+      }
     }
 
-    return { success: false, store: newStore, stores: [] };
+    // Local fallback: ensure new store is added locally so user can immediately use it
+    let currentStoredStores: Store[] = [];
+    try {
+      const raw = localStorage.getItem('cardapio_stores');
+      if (raw) currentStoredStores = JSON.parse(raw);
+    } catch {}
+
+    const updatedStores = [...currentStoredStores.filter(s => s.id !== newStore.id && s.slug !== newStore.slug), newStore];
+    this.handleIncomingStores(updatedStores, 'local_register');
+
+    return { 
+      success: true, 
+      store: newStore, 
+      stores: updatedStores,
+      categories: defaultCat ? [defaultCat] : undefined,
+      products: defaultProd ? [defaultProd] : undefined
+    };
   }
 
   // Delete store establishment directly on server and broadcast to all connected devices

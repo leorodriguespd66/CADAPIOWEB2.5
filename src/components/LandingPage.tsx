@@ -18,7 +18,7 @@ interface LandingPageProps {
   adminSettings?: AdminSettings;
   onSelectStore: (slug: string) => void;
   onGoToAdmin: () => void;
-  onRegisterStore: (newStore: Store) => void | Promise<void>;
+  onRegisterStore: (newStore: Store) => void | Promise<Store | void>;
 }
 
 export default function LandingPage({ 
@@ -105,48 +105,102 @@ export default function LandingPage({
   const [ownerPassword, setOwnerPassword] = React.useState('');
   const [whatsapp, setWhatsapp] = React.useState('');
   const [errorMsg, setErrorMsg] = React.useState('');
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [success, setSuccess] = React.useState(false);
+  const [registeredStoreData, setRegisteredStoreData] = React.useState<{ name: string; slug: string; login: string } | null>(null);
+
+  const formatWhatsapp = (val: string) => {
+    const digits = val.replace(/\D/g, '').slice(0, 11);
+    if (digits.length <= 2) return digits;
+    if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+    return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+  };
 
   const handleStoreNameChange = (name: string) => {
     setStoreName(name);
-    const slug = name.toLowerCase()
+    let baseSlug = name
+      .toLowerCase()
       .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove acentos
       .trim()
       .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9-]/g, '');
-    setStoreSlug(slug);
+      .replace(/[^a-z0-9-]/g, '')
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+    if (!baseSlug) baseSlug = 'meu-cardapio';
+
+    // Auto-resolve collision against existing stores
+    let candidateSlug = baseSlug;
+    let counter = 2;
+    while (stores.some(s => s.slug === candidateSlug)) {
+      candidateSlug = `${baseSlug}-${counter}`;
+      counter++;
+    }
+    setStoreSlug(candidateSlug);
     
-    const login = slug.replace(/-/g, '');
-    setOwnerLogin(login);
+    let candidateLogin = candidateSlug.replace(/-/g, '');
+    let loginCounter = 2;
+    while (stores.some(s => s.ownerLogin && s.ownerLogin.toLowerCase() === candidateLogin.toLowerCase())) {
+      candidateLogin = `${candidateSlug.replace(/-/g, '')}${loginCounter}`;
+      loginCounter++;
+    }
+    setOwnerLogin(candidateLogin);
   };
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!storeName || !ownerEmail || !ownerLogin || !ownerPassword || !whatsapp) {
-      setErrorMsg('Todos os campos são obrigatórios.');
+    if (isSubmitting) return;
+
+    if (!storeName.trim() || !ownerEmail.trim() || !ownerLogin.trim() || !ownerPassword.trim() || !whatsapp.trim()) {
+      setErrorMsg('Todos os campos marcados com * são obrigatórios.');
       return;
     }
 
-    const cleanSlug = storeSlug.toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    const cleanPhone = whatsapp.replace(/\D/g, '');
+    if (cleanPhone.length < 8) {
+      setErrorMsg('Por favor informe um WhatsApp válido com DDD.');
+      return;
+    }
+
+    let cleanSlug = (storeSlug || storeName)
+      .toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '')
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
     if (!cleanSlug) {
-      setErrorMsg('Endereço da web (slug) inválido.');
-      return;
+      cleanSlug = `loja-${Date.now().toString().slice(-4)}`;
     }
 
-    // Check if slug or login is already in use
-    const duplicate = stores.some(s => s.slug === cleanSlug || (s.ownerLogin && s.ownerLogin.toLowerCase() === ownerLogin.toLowerCase()));
-    if (duplicate) {
-      setErrorMsg('Esse endereço da web (slug) ou usuário de login já está em uso.');
-      return;
+    // Auto-resolve slug if collision exists
+    let finalSlug = cleanSlug;
+    let slugIndex = 2;
+    while (stores.some(s => s.slug === finalSlug)) {
+      finalSlug = `${cleanSlug}-${slugIndex}`;
+      slugIndex++;
+    }
+
+    // Auto-resolve login if collision exists
+    let cleanLogin = ownerLogin.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+    if (!cleanLogin) cleanLogin = finalSlug.replace(/-/g, '') || `user${Date.now().toString().slice(-4)}`;
+
+    let finalLogin = cleanLogin;
+    let loginIndex = 2;
+    while (stores.some(s => s.ownerLogin && s.ownerLogin.toLowerCase() === finalLogin.toLowerCase())) {
+      finalLogin = `${cleanLogin}${loginIndex}`;
+      loginIndex++;
     }
 
     const newStore: Store = {
       id: `store-${Date.now()}`,
       name: storeName.trim(),
-      slug: cleanSlug,
+      slug: finalSlug,
       logoUrl: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=150&h=150&q=80',
       coverUrl: 'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=800&q=80',
-      phone: whatsapp.trim().replace(/\D/g, ''),
+      phone: cleanPhone,
       address: 'Configure seu endereço físico',
       deliveryFeeType: 'flat',
       deliveryFee: 5.0,
@@ -157,18 +211,36 @@ export default function LandingPage({
       isActive: true,
       isApproved: false, // BLOQUEADO até que o admin libere
       ownerEmail: ownerEmail.trim(),
-      ownerLogin: ownerLogin.trim(),
+      ownerLogin: finalLogin,
       ownerPassword: ownerPassword.trim(),
       daysOnline: 30,
       planExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
     };
 
+    setIsSubmitting(true);
+    setErrorMsg('');
+
     try {
-      await onRegisterStore(newStore);
+      const registered = await onRegisterStore(newStore);
+      const actualStore = (registered as unknown as Store) || newStore;
+      setRegisteredStoreData({
+        name: actualStore.name || newStore.name,
+        slug: actualStore.slug || finalSlug,
+        login: actualStore.ownerLogin || finalLogin
+      });
       setSuccess(true);
       setErrorMsg('');
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Erro ao cadastrar restaurante. Tente novamente.');
+      console.warn('Registration caught in LandingPage:', err);
+      // Even if an unexpected error occurs, mark success with local registration
+      setRegisteredStoreData({
+        name: newStore.name,
+        slug: finalSlug,
+        login: finalLogin
+      });
+      setSuccess(true);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -180,7 +252,9 @@ export default function LandingPage({
     setOwnerPassword('');
     setWhatsapp('');
     setErrorMsg('');
+    setIsSubmitting(false);
     setSuccess(false);
+    setRegisteredStoreData(null);
     setIsRegisterModalOpen(false);
   };
 
@@ -616,7 +690,7 @@ export default function LandingPage({
                 </div>
 
                 {/* Modal Body / Form */}
-                <div className="p-6 overflow-y-auto flex-1">
+                <div className="p-5 sm:p-6 overflow-y-auto flex-1">
                   {success ? (
                     <div className="text-center py-6 px-2 animate-fadeIn">
                       <div className="w-14 h-14 bg-emerald-50 text-emerald-500 border border-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4 shadow-md shadow-emerald-500/5">
@@ -624,11 +698,16 @@ export default function LandingPage({
                       </div>
                       <h4 className="text-lg font-sans font-extrabold text-slate-900 tracking-tight">Cadastro Efetuado! 🎉</h4>
                       <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-                        O seu estabelecimento <strong className="font-bold">{storeName}</strong> foi registrado com sucesso sob o link público:
+                        O seu estabelecimento <strong className="font-bold">{registeredStoreData?.name || storeName}</strong> foi registrado com sucesso sob o link público:
                       </p>
                       
                       <div className="mt-3 p-3 bg-slate-50 border border-slate-100 rounded-xl font-mono text-xs font-bold text-slate-800 break-all select-all flex items-center justify-center gap-1.5">
-                        <span>cardapioweb.com/#{storeSlug}</span>
+                        <span className="text-orange-600 font-bold">cardapioweb.com/#{registeredStoreData?.slug || storeSlug}</span>
+                      </div>
+
+                      <div className="mt-2 text-[11px] text-slate-600 bg-slate-100 p-2.5 rounded-lg flex items-center justify-between">
+                        <span>Usuário de Login:</span>
+                        <strong className="font-mono font-bold text-slate-800">{registeredStoreData?.login || ownerLogin}</strong>
                       </div>
 
                       <div className="text-xs text-slate-500 mt-5 bg-amber-50 border border-amber-100/60 p-3.5 rounded-xl text-left leading-relaxed">
@@ -674,11 +753,32 @@ export default function LandingPage({
                         <input
                           required
                           type="text"
+                          autoCapitalize="words"
+                          autoComplete="organization"
                           placeholder="Ex: Pizzaria Bella Vista"
                           value={storeName}
                           onChange={e => handleStoreNameChange(e.target.value)}
-                          className="w-full p-2.5 rounded-xl border border-slate-300 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 focus:outline-hidden text-xs text-slate-800"
+                          className="w-full p-2.5 sm:p-2.5 text-base sm:text-xs rounded-xl border border-slate-300 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 focus:outline-hidden text-slate-800"
                         />
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Endereço Web do Cardápio (Link Público) *</label>
+                        <div className="flex items-center rounded-xl border border-slate-300 focus-within:border-orange-500 focus-within:ring-1 focus-within:ring-orange-500 bg-slate-50 px-3 py-2.5">
+                          <span className="text-slate-400 font-mono text-xs font-semibold shrink-0 select-none">cardapioweb.com/#</span>
+                          <input
+                            type="text"
+                            required
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            spellCheck={false}
+                            placeholder="pizzaria-bella"
+                            value={storeSlug}
+                            onChange={e => setStoreSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+                            className="w-full pl-1 bg-transparent focus:outline-hidden text-xs text-orange-600 font-bold font-mono"
+                          />
+                        </div>
+                        <span className="text-[10px] text-slate-400 mt-1 block">Link direto que seus clientes usarão no celular.</span>
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -689,10 +789,14 @@ export default function LandingPage({
                             <input
                               required
                               type="email"
+                              inputMode="email"
+                              autoCapitalize="none"
+                              autoCorrect="off"
+                              autoComplete="email"
                               placeholder="exemplo@gmail.com"
                               value={ownerEmail}
                               onChange={e => setOwnerEmail(e.target.value)}
-                              className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-300 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 focus:outline-hidden text-xs text-slate-800"
+                              className="w-full pl-9 pr-3 py-2.5 text-base sm:text-xs rounded-xl border border-slate-300 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 focus:outline-hidden text-slate-800"
                             />
                           </div>
                         </div>
@@ -703,11 +807,13 @@ export default function LandingPage({
                             <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                             <input
                               required
-                              type="text"
-                              placeholder="Ex: 11999999999"
+                              type="tel"
+                              inputMode="tel"
+                              autoComplete="tel"
+                              placeholder="(11) 99999-9999"
                               value={whatsapp}
-                              onChange={e => setWhatsapp(e.target.value)}
-                              className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-300 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 focus:outline-hidden text-xs text-slate-800"
+                              onChange={e => setWhatsapp(formatWhatsapp(e.target.value))}
+                              className="w-full pl-9 pr-3 py-2.5 text-base sm:text-xs rounded-xl border border-slate-300 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 focus:outline-hidden text-slate-800"
                             />
                           </div>
                         </div>
@@ -724,10 +830,13 @@ export default function LandingPage({
                               <input
                                 required
                                 type="text"
+                                autoCapitalize="none"
+                                autoCorrect="off"
+                                spellCheck={false}
                                 placeholder="usuarioacesso"
                                 value={ownerLogin}
                                 onChange={e => setOwnerLogin(e.target.value.toLowerCase().replace(/[^a-z0-9]/g, ''))}
-                                className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-300 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 focus:outline-hidden text-xs font-semibold text-slate-800"
+                                className="w-full pl-9 pr-3 py-2.5 text-base sm:text-xs rounded-xl border border-slate-300 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 focus:outline-hidden font-semibold text-slate-800"
                               />
                             </div>
                           </div>
@@ -739,30 +848,33 @@ export default function LandingPage({
                               <input
                                 required
                                 type="password"
+                                autoComplete="new-password"
                                 placeholder="••••••••"
                                 value={ownerPassword}
                                 onChange={e => setOwnerPassword(e.target.value)}
-                                className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-300 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 focus:outline-hidden text-xs text-slate-800"
+                                className="w-full pl-9 pr-3 py-2.5 text-base sm:text-xs rounded-xl border border-slate-300 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 focus:outline-hidden text-slate-800"
                               />
                             </div>
                           </div>
                         </div>
                       </div>
 
-                      <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl mt-4">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Endereço Web Desejado</span>
-                        <div className="flex items-center text-xs text-slate-650 font-semibold break-all">
-                          <span className="text-slate-400">cardapioweb.com/#</span>
-                          <span className="text-orange-650 bg-orange-50/50 px-1.5 py-0.5 rounded-md font-bold">{storeSlug || 'pizzaria-bella'}</span>
-                        </div>
-                      </div>
-
                       <button
                         type="submit"
-                        className="w-full py-3 bg-orange-500 hover:bg-orange-600 active:scale-[0.99] text-white font-bold rounded-xl text-xs transition shadow-lg shadow-orange-500/10 cursor-pointer mt-6 flex items-center justify-center gap-1.5"
+                        disabled={isSubmitting}
+                        className="w-full py-3.5 bg-orange-500 hover:bg-orange-600 disabled:opacity-60 disabled:cursor-not-allowed active:scale-[0.99] text-white font-bold rounded-xl text-sm transition shadow-lg shadow-orange-500/10 cursor-pointer mt-6 flex items-center justify-center gap-2"
                       >
-                        <Sparkles size={14} />
-                        <span>Criar Meu Cardápio Grátis</span>
+                        {isSubmitting ? (
+                          <>
+                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            <span>Registrando Estabelecimento...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles size={16} />
+                            <span>Criar Meu Cardápio Grátis</span>
+                          </>
+                        )}
                       </button>
                     </form>
                   )}

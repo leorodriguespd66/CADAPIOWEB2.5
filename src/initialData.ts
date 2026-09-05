@@ -666,17 +666,21 @@ export function saveLocalStorageData(
   motoboys?: Motoboy[]
 ) {
   if (typeof window === 'undefined') return;
-  localStorage.setItem('cardapio_stores', JSON.stringify(stores));
-  localStorage.setItem('cardapio_categories', JSON.stringify(categories));
-  localStorage.setItem('cardapio_products', JSON.stringify(products));
-  localStorage.setItem('cardapio_admin_settings', JSON.stringify(adminSettings));
-  if (orders) {
-    localStorage.setItem('cardapio_orders', JSON.stringify(orders));
-  }
-  if (cashTransactions) {
-    localStorage.setItem('cardapio_cash_transactions', JSON.stringify(cashTransactions));
-  }
-  if (motoboys) {
-    localStorage.setItem('cardapio_motoboys', JSON.stringify(motoboys));
+  try {
+    localStorage.setItem('cardapio_stores', JSON.stringify(stores));
+    localStorage.setItem('cardapio_categories', JSON.stringify(categories));
+    localStorage.setItem('cardapio_products', JSON.stringify(products));
+    localStorage.setItem('cardapio_admin_settings', JSON.stringify(adminSettings));
+    if (orders) {
+      localStorage.setItem('cardapio_orders', JSON.stringify(orders));
+    }
+    if (cashTransactions) {
+      localStorage.setItem('cardapio_cash_transactions', JSON.stringify(cashTransactions));
+    }
+    if (motoboys) {
+      localStorage.setItem('cardapio_motoboys', JSON.stringify(motoboys));
+    }
+  } catch (err) {
+    console.warn('Unable to write to localStorage (quota or private browsing mode):', err);
   }
 }

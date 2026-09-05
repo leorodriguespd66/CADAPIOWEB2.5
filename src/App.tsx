@@ -245,7 +245,7 @@ export default function App() {
     setActiveStoreSlug(null);
   };
 
-  const handleRegisterStore = async (newStore: Store) => {
+  const handleRegisterStore = async (newStore: Store): Promise<Store> => {
     // 1. Create default category and product for this new store
     const defaultCatId = `cat-${Date.now()}`;
     const defaultCat: Category = {
@@ -281,16 +281,17 @@ export default function App() {
         if (serverResult.categories) setCategories(serverResult.categories);
         if (serverResult.products) setProducts(serverResult.products);
         saveLocalStorageData(serverResult.stores, serverResult.categories || categories, serverResult.products || products, adminSettings, orders, cashTransactions, motoboys);
-      } else {
-        const updatedStores = [...stores.filter(s => s.id !== storeToRegister.id && s.slug !== storeToRegister.slug), storeToRegister];
-        const updatedCategories = [...categories, defaultCat];
-        const updatedProducts = [...products, defaultProd];
-        handleUpdateData(updatedStores, updatedCategories, updatedProducts, adminSettings);
+        return serverResult.store || storeToRegister;
       }
     } catch (err: any) {
       console.warn('Realtime store registration error:', err);
-      throw err;
     }
+
+    const updatedStores = [...stores.filter(s => s.id !== storeToRegister.id && s.slug !== storeToRegister.slug), storeToRegister];
+    const updatedCategories = [...categories, defaultCat];
+    const updatedProducts = [...products, defaultProd];
+    handleUpdateData(updatedStores, updatedCategories, updatedProducts, adminSettings);
+    return storeToRegister;
   };
 
   // Find active store for digital menu view

@@ -51,7 +51,14 @@ export default function App() {
     // Subscribe to cross-device data updates (products, prices, motoboys, stores)
     const unsubscribeData = realtimeOrderManager.subscribeData((payload) => {
       if (payload.products) setProducts(payload.products);
-      if (payload.stores) setStores(payload.stores);
+      if (payload.stores) {
+        setStores(payload.stores);
+        // If current active store was deleted, automatically kick user back to landing page
+        if (activeStoreSlug && !payload.stores.some(s => s.slug === activeStoreSlug)) {
+          setActiveStoreSlug(null);
+          setCurrentView('landing');
+        }
+      }
       if (payload.categories) setCategories(payload.categories);
       if (payload.motoboys) setMotoboys(payload.motoboys);
       if (payload.adminSettings) {
@@ -260,23 +267,29 @@ export default function App() {
       options: []
     };
 
-    const updatedStores = [...stores.filter(s => s.id !== newStore.id && s.slug !== newStore.slug), newStore];
-    const updatedCategories = [...categories, defaultCat];
-    const updatedProducts = [...products, defaultProd];
-
-    // Optimistic local state update
-    handleUpdateData(updatedStores, updatedCategories, updatedProducts, adminSettings);
+    const storeToRegister: Store = {
+      ...newStore,
+      isApproved: false,
+      isBlocked: false
+    };
 
     // Call server to persist and broadcast to all connected devices in real time
     try {
-      const serverResult = await realtimeOrderManager.registerStore(newStore, defaultCat, defaultProd);
+      const serverResult = await realtimeOrderManager.registerStore(storeToRegister, defaultCat, defaultProd);
       if (serverResult && serverResult.stores && serverResult.stores.length > 0) {
         setStores(serverResult.stores);
         if (serverResult.categories) setCategories(serverResult.categories);
         if (serverResult.products) setProducts(serverResult.products);
+        saveLocalStorageData(serverResult.stores, serverResult.categories || categories, serverResult.products || products, adminSettings, orders, cashTransactions, motoboys);
+      } else {
+        const updatedStores = [...stores.filter(s => s.id !== storeToRegister.id && s.slug !== storeToRegister.slug), storeToRegister];
+        const updatedCategories = [...categories, defaultCat];
+        const updatedProducts = [...products, defaultProd];
+        handleUpdateData(updatedStores, updatedCategories, updatedProducts, adminSettings);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Realtime store registration error:', err);
+      throw err;
     }
   };
 

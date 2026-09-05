@@ -304,6 +304,16 @@ class RealtimeOrderManager {
             this.handleIncomingOrders(updated, 'broadcast');
           } else if (data && data.type === 'NEW_STORE_REGISTERED' && Array.isArray(data.stores)) {
             this.handleIncomingStores(data.stores, 'broadcast', data.categories, data.products);
+          } else if (data && data.type === 'STORE_DELETED') {
+            if (Array.isArray(data.stores)) {
+              this.handleIncomingStores(data.stores, 'broadcast_delete', data.categories, data.products);
+            }
+            this.notifyDataListeners({ stores: data.stores, categories: data.categories, products: data.products });
+          } else if (data && data.type === 'STORE_APPROVED') {
+            if (Array.isArray(data.stores)) {
+              this.handleIncomingStores(data.stores, 'broadcast_approve');
+            }
+            this.notifyDataListeners({ stores: data.stores });
           } else if (data && data.type === 'DATA_UPDATED') {
             if (data.stores && Array.isArray(data.stores)) {
               this.handleIncomingStores(data.stores, 'broadcast', data.categories, data.products);
@@ -370,12 +380,12 @@ class RealtimeOrderManager {
           if (data && Array.isArray(data.orders)) {
             this.handleIncomingOrders(data.orders, 'sse');
           }
-          if (data && (data.type === 'NEW_STORE_REGISTERED' || data.type === 'DATA_UPDATED')) {
+          if (data && (data.type === 'NEW_STORE_REGISTERED' || data.type === 'DATA_UPDATED' || data.type === 'STORE_DELETED' || data.type === 'STORE_APPROVED')) {
             if (Array.isArray(data.stores)) {
-              this.handleIncomingStores(data.stores, 'sse_store', data.categories, data.products);
+              this.handleIncomingStores(data.stores, `sse_${data.type.toLowerCase()}`, data.categories, data.products);
             }
           }
-          if (data && data.type === 'DATA_UPDATED') {
+          if (data && (data.type === 'DATA_UPDATED' || data.type === 'STORE_DELETED' || data.type === 'STORE_APPROVED')) {
             this.notifyDataListeners(data);
           }
         } catch (e) {
@@ -478,6 +488,90 @@ class RealtimeOrderManager {
     }
 
     return { success: false, store: newStore, stores: [] };
+  }
+
+  // Delete store establishment directly on server and broadcast to all connected devices
+  public async deleteStore(storeId: string): Promise<{ success: boolean; stores: Store[]; categories?: Category[]; products?: Product[] }> {
+    // 1. Optimistic local update
+    let currentStoredStores: Store[] = [];
+    try {
+      const raw = localStorage.getItem('cardapio_stores');
+      if (raw) currentStoredStores = JSON.parse(raw);
+    } catch {}
+
+    const updatedStores = currentStoredStores.filter(s => s.id !== storeId);
+    this.handleIncomingStores(updatedStores, 'local_delete');
+
+    // 2. BroadcastChannel across open tabs
+    if (this.broadcastChannel) {
+      try {
+        this.broadcastChannel.postMessage({
+          type: 'STORE_DELETED',
+          storeId,
+          stores: updatedStores
+        });
+      } catch (e) {}
+    }
+
+    // 3. Server DELETE endpoint
+    try {
+      const res = await fetch(`/api/stores/${encodeURIComponent(storeId)}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.stores)) {
+          this.handleIncomingStores(data.stores, 'server_delete', data.categories, data.products);
+          return data;
+        }
+      }
+    } catch (e) {
+      console.warn('Error deleting store on server:', e);
+    }
+
+    return { success: true, stores: updatedStores };
+  }
+
+  // Approve store establishment (liberar link do lojista)
+  public async approveStore(storeId: string): Promise<{ success: boolean; store?: Store; stores: Store[] }> {
+    // 1. Optimistic update
+    let currentStoredStores: Store[] = [];
+    try {
+      const raw = localStorage.getItem('cardapio_stores');
+      if (raw) currentStoredStores = JSON.parse(raw);
+    } catch {}
+
+    const updatedStores = currentStoredStores.map(s => s.id === storeId ? { ...s, isApproved: true, isBlocked: false } : s);
+    this.handleIncomingStores(updatedStores, 'local_approve');
+
+    // 2. BroadcastChannel
+    if (this.broadcastChannel) {
+      try {
+        this.broadcastChannel.postMessage({
+          type: 'STORE_APPROVED',
+          storeId,
+          stores: updatedStores
+        });
+      } catch (e) {}
+    }
+
+    // 3. Server PATCH endpoint
+    try {
+      const res = await fetch(`/api/stores/${encodeURIComponent(storeId)}/approve`, {
+        method: 'PATCH'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.stores)) {
+          this.handleIncomingStores(data.stores, 'server_approve');
+          return data;
+        }
+      }
+    } catch (e) {
+      console.warn('Error approving store on server:', e);
+    }
+
+    return { success: true, stores: updatedStores };
   }
 
   // Send new order to all clients and server

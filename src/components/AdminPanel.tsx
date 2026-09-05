@@ -280,7 +280,7 @@ export default function AdminPanel({
   };
 
   // Approve pending store link
-  const handleApproveStore = (storeId: string) => {
+  const handleApproveStore = async (storeId: string) => {
     const updatedStores = stores.map(s => {
       if (s.id === storeId) {
         return { ...s, isApproved: true, isBlocked: false };
@@ -289,6 +289,9 @@ export default function AdminPanel({
     });
     onUpdateData(updatedStores, categories, products, adminSettings);
     showToast('Link do estabelecimento liberado para vendas!');
+    try {
+      await realtimeOrderManager.approveStore(storeId);
+    } catch (e) {}
   };
 
   // Block or Unblock store link
@@ -465,7 +468,7 @@ export default function AdminPanel({
     setSelectedStoreId(preparedStore.id);
   };
 
-  const handleDeleteStore = (storeId: string) => {
+  const handleDeleteStore = async (storeId: string) => {
     if (!window.confirm('Tem certeza de que deseja excluir este estabelecimento e TODOS os seus produtos e categorias relacionados?')) return;
     
     const updatedStores = stores.filter(s => s.id !== storeId);
@@ -475,6 +478,13 @@ export default function AdminPanel({
     onUpdateData(updatedStores, updatedCategories, updatedProducts, adminSettings);
     if (selectedStoreId === storeId) {
       setSelectedStoreId(updatedStores[0]?.id || '');
+    }
+    showToast('Estabelecimento excluído com sucesso!');
+
+    try {
+      await realtimeOrderManager.deleteStore(storeId);
+    } catch (e) {
+      console.warn('Erro ao deletar estabelecimento:', e);
     }
   };
 

@@ -223,10 +223,12 @@ app.post("/api/stores/register", (req, res) => {
     return res.status(400).json({ error: "Endereço da web (slug) inválido." });
   }
 
-  // Check if slug or ownerLogin is taken
+  // Check if slug or ownerLogin is taken by ANOTHER store
   const duplicate = appData.stores.some(s => 
-    (s.slug && s.slug.toLowerCase() === cleanSlug) ||
-    (newStore.ownerLogin && s.ownerLogin && s.ownerLogin.toLowerCase() === newStore.ownerLogin.toLowerCase())
+    s.id !== newStore.id && (
+      (s.slug && s.slug.toLowerCase() === cleanSlug) ||
+      (newStore.ownerLogin && s.ownerLogin && s.ownerLogin.toLowerCase() === newStore.ownerLogin.toLowerCase())
+    )
   );
   if (duplicate) {
     return res.status(409).json({ error: "Esse endereço da web ou usuário de login já está em uso." });
@@ -246,7 +248,8 @@ app.post("/api/stores/register", (req, res) => {
     createdAt: newStore.createdAt || new Date().toISOString()
   };
 
-  appData.stores = [...appData.stores, registeredStore];
+  // Replace if exists with same id or append
+  appData.stores = [...appData.stores.filter(s => s.id !== registeredStore.id), registeredStore];
 
   if (defaultCategory) {
     const catExists = appData.categories.some(c => c.id === defaultCategory.id);
@@ -289,6 +292,91 @@ app.post("/api/stores/register", (req, res) => {
     categories: appData.categories,
     products: appData.products
   });
+});
+
+// Delete store endpoint (super admin deletes a store and all associated catalog)
+app.delete("/api/stores/:id", (req, res) => {
+  const { id } = req.params;
+  if (!id) {
+    return res.status(400).json({ error: "ID do estabelecimento não fornecido." });
+  }
+
+  const deletedStore = appData.stores.find(s => s.id === id || s.slug === id);
+  appData.stores = appData.stores.filter(s => s.id !== id && s.slug !== id);
+  appData.categories = appData.categories.filter(c => c.storeId !== id);
+  appData.products = appData.products.filter(p => p.storeId !== id);
+
+  saveData(appData);
+
+  // Broadcast deletion to all SSE clients instantly
+  const deleteMsg = JSON.stringify({
+    type: "STORE_DELETED",
+    storeId: id,
+    storeSlug: deletedStore?.slug,
+    stores: appData.stores,
+    categories: appData.categories,
+    products: appData.products,
+    timestamp: Date.now()
+  });
+
+  sseClients.forEach(client => {
+    try {
+      client.res.write(`data: ${deleteMsg}\n\n`);
+    } catch (e) {}
+  });
+
+  broadcastData(appData);
+
+  console.log(`[STORE DELETED] Estabelecimento ${id} (${deletedStore?.name || ''}) excluído com sucesso.`);
+  res.json({
+    success: true,
+    storeId: id,
+    stores: appData.stores,
+    categories: appData.categories,
+    products: appData.products
+  });
+});
+
+// Approve store endpoint (liberar link do estabelecimento)
+app.patch("/api/stores/:id/approve", (req, res) => {
+  const { id } = req.params;
+  let approvedStore: any = null;
+
+  appData.stores = appData.stores.map(s => {
+    if (s.id === id || s.slug === id) {
+      approvedStore = {
+        ...s,
+        isApproved: true,
+        isBlocked: false
+      };
+      return approvedStore;
+    }
+    return s;
+  });
+
+  if (!approvedStore) {
+    return res.status(404).json({ error: "Estabelecimento não encontrado." });
+  }
+
+  saveData(appData);
+
+  const approveMsg = JSON.stringify({
+    type: "STORE_APPROVED",
+    store: approvedStore,
+    stores: appData.stores,
+    timestamp: Date.now()
+  });
+
+  sseClients.forEach(client => {
+    try {
+      client.res.write(`data: ${approveMsg}\n\n`);
+    } catch (e) {}
+  });
+
+  broadcastData(appData);
+
+  console.log(`[STORE APPROVED] Estabelecimento ${approvedStore.name} aprovado.`);
+  res.json({ success: true, store: approvedStore, stores: appData.stores });
 });
 
 // Get orders

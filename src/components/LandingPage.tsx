@@ -40,10 +40,10 @@ export default function LandingPage({
     return () => clearInterval(timer);
   }, []);
 
-  // Show all registered stores (excluding only explicitly blocked ones)
+  // Show all registered stores (excluding blocked or unapproved ones)
   // Highlight top rated stores first as requested
   const sortedActiveStores = useMemo(() => {
-    const valid = stores.filter(s => s.isBlocked !== true);
+    const valid = stores.filter(s => s.isBlocked !== true && s.isApproved !== false);
 
     return [...valid].sort((a, b) => {
       const ratingInfoA = calculateStoreRating(a, orders);
